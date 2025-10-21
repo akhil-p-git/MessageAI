@@ -1,159 +1,56 @@
-//
-//  MainTabView.swift
-//  MessageAI
-//
-//  Main tab view for authenticated users
-//
-
 import SwiftUI
 
 struct MainTabView: View {
-    
-    // MARK: - Properties
-    
-    @State private var selectedTab = 0
-    
-    // MARK: - Body
+    @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            // Conversations Tab
-            ConversationsPlaceholderView()
+        TabView {
+            ConversationListView()
                 .tabItem {
-                    Label("Conversations", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
                 }
-                .tag(0)
             
-            // Profile Tab
-            ProfilePlaceholderView()
+            ProfileView()
                 .tabItem {
                     Label("Profile", systemImage: "person.fill")
                 }
-                .tag(1)
-        }
-        .tint(.firebaseOrange)
-    }
-}
-
-// MARK: - Conversations Placeholder View
-
-struct ConversationsPlaceholderView: View {
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
-                
-                // Icon
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.firebaseOrange.opacity(0.2), Color.firebaseRed.opacity(0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 120, height: 120)
-                    
-                    Image(systemName: "bubble.left.and.bubble.right.fill")
-                        .font(.system(size: 50))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.firebaseOrange, Color.firebaseRed],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-                
-                // Title
-                Text("Conversations")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                // Coming Soon Text
-                Text("Coming soon!")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                
-                // Description
-                Text("Your conversations will appear here")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                Spacer()
-            }
-            .navigationTitle("Conversations")
-            .navigationBarTitleDisplayMode(.large)
         }
     }
 }
 
-// MARK: - Profile Placeholder View
-
-struct ProfilePlaceholderView: View {
+// Placeholder Profile View
+struct ProfileView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
+    
     var body: some View {
         NavigationStack {
-            VStack(spacing: 24) {
-                Spacer()
+            VStack(spacing: 20) {
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 80))
+                    .foregroundColor(.blue)
                 
-                // Icon
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.firebaseOrange.opacity(0.2), Color.firebaseRed.opacity(0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 120, height: 120)
+                if let user = authViewModel.currentUser {
+                    Text(user.displayName)
+                        .font(.title2)
+                        .bold()
                     
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 50))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color.firebaseOrange, Color.firebaseRed],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    Text(user.email)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
                 
-                // Title
-                Text("Profile")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(.primary)
-                
-                // Coming Soon Text
-                Text("Coming soon!")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                
-                // Description
-                Text("Your profile settings will appear here")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                Spacer()
+                Button("Sign Out") {
+                    authViewModel.signOut()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
             }
             .navigationTitle("Profile")
-            .navigationBarTitleDisplayMode(.large)
         }
     }
 }
 
-// MARK: - Preview
-
-#if DEBUG
-struct MainTabView_Previews: PreviewProvider {
-    static var previews: some View {
-        MainTabView()
-    }
+#Preview {
+    MainTabView()
+        .environmentObject(AuthViewModel())
 }
-#endif
-

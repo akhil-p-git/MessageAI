@@ -13,6 +13,6 @@ struct MessageAIApp: App {
         WindowGroup {
             RootView()
         }
-        .modelContainer(for: User.self)
+        .modelContainer(for: [User.self, Conversation.self, Message.self])
     }
 }

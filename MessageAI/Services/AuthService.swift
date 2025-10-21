@@ -61,4 +61,21 @@ class AuthService {
         
         return user
     }
+    
+    func findUserByEmail(_ email: String) async throws -> User {
+            let snapshot = try await db.collection("users")
+                .whereField("email", isEqualTo: email.lowercased())
+                .limit(to: 1)
+                .getDocuments()
+            
+            guard let document = snapshot.documents.first else {
+                throw NSError(domain: "AuthService", code: 404, userInfo: [NSLocalizedDescriptionKey: "User not found"])
+            }
+            
+            guard let user = User.fromDictionary(document.data()) else {
+                throw NSError(domain: "AuthService", code: 500, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user"])
+            }
+            
+            return user
+        }
 }
