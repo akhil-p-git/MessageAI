@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import FirebaseFirestore
+import PhotosUI
 
 struct ChatView: View {
     let conversation: Conversation
@@ -9,12 +10,15 @@ struct ChatView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     
     @Query private var allMessages: [Message]
-    @State private var typingUsers: [String] = []
-    @State private var typingListener: ListenerRegistration?
-    @State private var typingTimer: Timer?
     @State private var messageText = ""
     @State private var listener: ListenerRegistration?
     @State private var showGroupInfo = false
+    @State private var typingUsers: [String] = []
+    @State private var typingListener: ListenerRegistration?
+    @State private var typingTimer: Timer?
+    @State private var readReceiptListener: ListenerRegistration?
+    @State private var selectedImage: PhotosPickerItem?
+    @State private var isUploadingImage = false
     
     private var messages: [Message] {
         allMessages.filter { $0.conversationID == conversation.id }
@@ -42,13 +46,13 @@ struct ChatView: View {
         }
         .onAppear {
             setupRealtimeListener()
+            markMessagesAsRead()
         }
         .onDisappear {
             listener?.remove()
             typingListener?.remove()
             typingTimer?.invalidate()
             
-            // Clear typing status when leaving
             if let currentUser = authViewModel.currentUser {
                 Task {
                     await PresenceService.shared.setTyping(
@@ -60,7 +64,7 @@ struct ChatView: View {
             }
         }
     }
-
+    
     private var conversationTitle: String {
         conversation.isGroup ? (conversation.name ?? "Group Chat") : "Chat"
     }
@@ -75,7 +79,7 @@ struct ChatView: View {
             return "\(otherTypingUsers.count) people typing..."
         }
     }
-
+    
     private var messagesView: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -89,7 +93,6 @@ struct ChatView: View {
                         .id(message.id)
                     }
                     
-                    // Typing Indicator
                     if let typingText = typingText {
                         HStack {
                             Text(typingText)
@@ -114,9 +117,20 @@ struct ChatView: View {
             }
         }
     }
-
+    
     private var inputBar: some View {
         HStack(spacing: 12) {
+            PhotosPicker(selection: $selectedImage, matching: .images) {
+                Image(systemName: "photo")
+                    .font(.system(size: 24))
+                    .foregroundColor(.blue)
+            }
+            .onChange(of: selectedImage) { _, newValue in
+                if newValue != nil {
+                    uploadSelectedImage()
+                }
+            }
+            
             TextField("Message...", text: $messageText)
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.send)
@@ -127,17 +141,22 @@ struct ChatView: View {
                     sendMessage()
                 }
             
-            Button(action: sendMessage) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(messageText.isEmpty ? .gray : .blue)
+            if isUploadingImage {
+                ProgressView()
+                    .progressViewStyle(.circular)
+            } else {
+                Button(action: sendMessage) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundColor(messageText.isEmpty ? .gray : .blue)
+                }
+                .disabled(messageText.isEmpty)
             }
-            .disabled(messageText.isEmpty)
         }
         .padding()
         .background(Color(uiColor: .systemBackground))
     }
-
+    
     private func scrollToBottom(proxy: ScrollViewProxy) {
         if let lastMessage = messages.last {
             withAnimation {
@@ -165,10 +184,8 @@ struct ChatView: View {
             type: .text
         )
         
-        // Save to SwiftData
         modelContext.insert(message)
         
-        // Save to Firestore
         Task {
             do {
                 let db = Firestore.firestore()
@@ -178,13 +195,11 @@ struct ChatView: View {
                     .document(message.id)
                     .setData(message.toDictionary())
                 
-                // Update conversation's last message
                 try await ConversationService.shared.updateLastMessage(
                     conversationID: conversation.id,
                     message: content
                 )
                 
-                // Update message status
                 message.status = .sent
                 try modelContext.save()
             } catch {
@@ -209,7 +224,6 @@ struct ChatView: View {
                 for change in snapshot.documentChanges {
                     if change.type == .added {
                         if let message = Message.fromDictionary(change.document.data()) {
-                            // Check if message already exists
                             let existingMessage = allMessages.first { $0.id == message.id }
                             if existingMessage == nil {
                                 modelContext.insert(message)
@@ -219,19 +233,18 @@ struct ChatView: View {
                     }
                 }
             }
-            typingListener = PresenceService.shared.listenToTyping(conversationID: conversation.id) { userIDs in
-                typingUsers = userIDs
-            }
+        
+        typingListener = PresenceService.shared.listenToTyping(conversationID: conversation.id) { userIDs in
+            typingUsers = userIDs
+        }
     }
     
     private func handleTyping(_ text: String) {
         guard let currentUser = authViewModel.currentUser else { return }
         
-        // Cancel existing timer
         typingTimer?.invalidate()
         
         if !text.isEmpty {
-            // User is typing
             Task {
                 await PresenceService.shared.setTyping(
                     conversationID: conversation.id,
@@ -240,7 +253,6 @@ struct ChatView: View {
                 )
             }
             
-            // Set timer to clear typing status after 3 seconds
             typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
                 Task {
                     await PresenceService.shared.setTyping(
@@ -251,7 +263,6 @@ struct ChatView: View {
                 }
             }
         } else {
-            // User cleared text
             Task {
                 await PresenceService.shared.setTyping(
                     conversationID: conversation.id,
@@ -259,6 +270,87 @@ struct ChatView: View {
                     isTyping: false
                 )
             }
+        }
+    }
+    
+    private func markMessagesAsRead() {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        let unreadMessages = messages.filter { message in
+            message.senderID != currentUser.id &&
+            !message.readBy.contains(currentUser.id)
+        }
+        
+        for message in unreadMessages {
+            if !message.readBy.contains(currentUser.id) {
+                message.readBy.append(currentUser.id)
+            }
+            
+            Task {
+                let db = Firestore.firestore()
+                try? await db.collection("conversations")
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .updateData([
+                        "readBy": FieldValue.arrayUnion([currentUser.id])
+                    ])
+            }
+        }
+    }
+    
+    private func uploadSelectedImage() {
+        guard let selectedImage = selectedImage,
+              let currentUser = authViewModel.currentUser else {
+            return
+        }
+        
+        isUploadingImage = true
+        
+        Task {
+            do {
+                guard let imageData = try await selectedImage.loadTransferable(type: Data.self),
+                      let uiImage = UIImage(data: imageData) else {
+                    isUploadingImage = false
+                    return
+                }
+                
+                let imageURL = try await MediaService.shared.uploadImage(uiImage, conversationID: conversation.id)
+                
+                let message = Message(
+                    id: UUID().uuidString,
+                    conversationID: conversation.id,
+                    senderID: currentUser.id,
+                    content: "[Image]",
+                    timestamp: Date(),
+                    status: .sending,
+                    type: .image,
+                    mediaURL: imageURL
+                )
+                
+                modelContext.insert(message)
+                
+                let db = Firestore.firestore()
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .setData(message.toDictionary())
+                
+                try await ConversationService.shared.updateLastMessage(
+                    conversationID: conversation.id,
+                    message: "[Image]"
+                )
+                
+                message.status = .sent
+                try modelContext.save()
+                
+                self.selectedImage = nil
+            } catch {
+                print("Error uploading image: \(error)")
+            }
+            
+            isUploadingImage = false
         }
     }
 }
@@ -273,25 +365,72 @@ struct MessageBubble: View {
             if isFromCurrentUser { Spacer() }
             
             VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
-                // Show sender name in group chats
                 if conversation.isGroup && !isFromCurrentUser {
                     Text(message.senderID)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 
-                Text(message.content)
-                    .padding(12)
-                    .background(isFromCurrentUser ? Color.blue : Color(uiColor: .systemGray5))
-                    .foregroundColor(isFromCurrentUser ? .white : .primary)
-                    .cornerRadius(16)
+                if message.type == .image, let mediaURL = message.mediaURL {
+                    AsyncImage(url: URL(string: mediaURL)) { phase in
+                        switch phase {
+                        case .empty:
+                            ProgressView()
+                                .frame(width: 200, height: 200)
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(maxWidth: 250, maxHeight: 300)
+                                .cornerRadius(12)
+                                .clipped()
+                        case .failure:
+                            Image(systemName: "photo")
+                                .frame(width: 200, height: 200)
+                                .background(Color.gray.opacity(0.2))
+                                .cornerRadius(12)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                } else {
+                    Text(message.content)
+                        .padding(12)
+                        .background(isFromCurrentUser ? Color.blue : Color(uiColor: .systemGray5))
+                        .foregroundColor(isFromCurrentUser ? .white : .primary)
+                        .cornerRadius(16)
+                }
                 
-                Text(formatTime(message.timestamp))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                HStack(spacing: 4) {
+                    Text(formatTime(message.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    if isFromCurrentUser {
+                        readReceiptIcon
+                    }
+                }
             }
             
             if !isFromCurrentUser { Spacer() }
+        }
+    }
+    
+    private var readReceiptIcon: some View {
+        Group {
+            if message.readBy.count > 1 {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.caption2)
+                    .foregroundColor(.blue)
+            } else if message.status == .delivered {
+                Image(systemName: "checkmark.circle")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else if message.status == .sent {
+                Image(systemName: "checkmark")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
         }
     }
     

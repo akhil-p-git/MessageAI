@@ -9,11 +9,13 @@ struct ConversationListView: View {
     @Query(sort: \Conversation.lastMessageTime, order: .reverse) private var conversations: [Conversation]
     
     @State private var showingNewChat = false
-    @State private var isRefreshing = false
     @State private var showingNewGroup = false
+    @State private var isRefreshing = false
+    @Binding var selectedConversationID: String?
+    @State private var navigationPath = NavigationPath()
     
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             Group {
                 if conversations.isEmpty {
                     // Empty State
@@ -34,7 +36,7 @@ struct ConversationListView: View {
                     // Conversation List
                     List {
                         ForEach(conversations) { conversation in
-                            NavigationLink(destination: ChatView(conversation: conversation)) {
+                            NavigationLink(value: conversation) {
                                 ConversationRow(conversation: conversation)
                             }
                         }
@@ -44,6 +46,9 @@ struct ConversationListView: View {
                         await refreshConversations()
                     }
                 }
+            }
+            .navigationDestination(for: Conversation.self) { conversation in
+                ChatView(conversation: conversation)
             }
             .navigationTitle("Messages")
             .toolbar {
@@ -66,6 +71,13 @@ struct ConversationListView: View {
             }
             .sheet(isPresented: $showingNewGroup) {
                 NewGroupChatView()
+            }
+            .onChange(of: selectedConversationID) { _, newValue in
+                if let conversationID = newValue,
+                   let conversation = conversations.first(where: { $0.id == conversationID }) {
+                    navigationPath.append(conversation)
+                    selectedConversationID = nil
+                }
             }
             .onAppear {
                 Task {
@@ -170,7 +182,6 @@ struct ConversationRow: View {
         guard !conversation.isGroup else { return }
         
         // Get the other user's ID
-        // This is simplified - you'd want to filter out the current user's ID
         if let otherUserID = conversation.participantIDs.first {
             let db = Firestore.firestore()
             db.collection("users").document(otherUserID).addSnapshotListener { snapshot, error in
@@ -203,6 +214,6 @@ struct ConversationRow: View {
 }
 
 #Preview {
-    ConversationListView()
+    ConversationListView(selectedConversationID: .constant(nil))
         .environmentObject(AuthViewModel())
 }
