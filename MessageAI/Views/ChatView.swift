@@ -1,7 +1,6 @@
 import SwiftUI
 import SwiftData
 import FirebaseFirestore
-import PhotosUI
 
 struct ChatView: View {
     let conversation: Conversation
@@ -9,142 +8,65 @@ struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var authViewModel: AuthViewModel
     
-    @Query private var allMessages: [Message]
     @State private var messageText = ""
+    @State private var messages: [Message] = []
     @State private var listener: ListenerRegistration?
-    @State private var showGroupInfo = false
-    @State private var typingUsers: [String] = []
-    @State private var typingListener: ListenerRegistration?
-    @State private var typingTimer: Timer?
-    @State private var readReceiptListener: ListenerRegistration?
-    @State private var selectedImage: PhotosPickerItem?
-    @State private var isUploadingImage = false
-    
-    private var messages: [Message] {
-        allMessages.filter { $0.conversationID == conversation.id }
-            .sorted { $0.timestamp < $1.timestamp }
-    }
+    @State private var isLoading = true
     
     var body: some View {
         VStack(spacing: 0) {
-            messagesView
-            inputBar
-        }
-        .navigationTitle(conversationTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if conversation.isGroup {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showGroupInfo = true }) {
-                        Image(systemName: "info.circle")
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showGroupInfo) {
-            GroupInfoView(conversation: conversation)
-        }
-        .onAppear {
-            setupRealtimeListener()
-            markMessagesAsRead()
-        }
-        .onDisappear {
-            listener?.remove()
-            typingListener?.remove()
-            typingTimer?.invalidate()
-            
-            if let currentUser = authViewModel.currentUser {
-                Task {
-                    await PresenceService.shared.setTyping(
-                        conversationID: conversation.id,
-                        userID: currentUser.id,
-                        isTyping: false
-                    )
-                }
-            }
-        }
-    }
-    
-    private var conversationTitle: String {
-        conversation.isGroup ? (conversation.name ?? "Group Chat") : "Chat"
-    }
-    
-    private var typingText: String? {
-        let otherTypingUsers = typingUsers.filter { $0 != authViewModel.currentUser?.id }
-        guard !otherTypingUsers.isEmpty else { return nil }
-        
-        if otherTypingUsers.count == 1 {
-            return "typing..."
-        } else {
-            return "\(otherTypingUsers.count) people typing..."
-        }
-    }
-    
-    private var messagesView: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(spacing: 12) {
-                    ForEach(messages) { message in
-                        MessageBubble(
-                            message: message,
-                            isFromCurrentUser: message.senderID == authViewModel.currentUser?.id,
-                            conversation: conversation
-                        )
-                        .id(message.id)
-                    }
-                    
-                    if let typingText = typingText {
-                        HStack {
-                            Text(typingText)
+            // Messages ScrollView
+            ScrollViewReader { proxy in
+                ScrollView {
+                    if isLoading {
+                        ProgressView()
+                            .padding()
+                    } else if messages.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.system(size: 50))
+                                .foregroundColor(.gray)
+                            Text("No messages yet")
+                                .foregroundColor(.secondary)
+                            Text("Send a message to start the conversation")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-                                .italic()
-                            Spacer()
                         }
-                        .padding(.horizontal)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding()
+                    } else {
+                        LazyVStack(spacing: 12) {
+                            ForEach(messages) { message in
+                                MessageBubble(
+                                    message: message,
+                                    isCurrentUser: message.senderID == authViewModel.currentUser?.id,
+                                    isGroupChat: conversation.isGroup
+                                )
+                                .id(message.id)
+                            }
+                        }
+                        .padding()
                     }
                 }
-                .padding()
-            }
-            .onChange(of: messages.count) { _, _ in
-                scrollToBottom(proxy: proxy)
-            }
-            .onChange(of: typingText) { _, _ in
-                scrollToBottom(proxy: proxy)
-            }
-            .onAppear {
-                scrollToBottom(proxy: proxy)
-            }
-        }
-    }
-    
-    private var inputBar: some View {
-        HStack(spacing: 12) {
-            PhotosPicker(selection: $selectedImage, matching: .images) {
-                Image(systemName: "photo")
-                    .font(.system(size: 24))
-                    .foregroundColor(.blue)
-            }
-            .onChange(of: selectedImage) { _, newValue in
-                if newValue != nil {
-                    uploadSelectedImage()
+                .onChange(of: messages.count) { _, _ in
+                    if let lastMessage = messages.last {
+                        withAnimation {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                }
+                .onChange(of: messages) { _, _ in
+                    // Mark messages as read when they appear on screen
+                    updateMessageStatuses()
                 }
             }
             
-            TextField("Message...", text: $messageText)
-                .textFieldStyle(.roundedBorder)
-                .submitLabel(.send)
-                .onChange(of: messageText) { _, newValue in
-                    handleTyping(newValue)
-                }
-                .onSubmit {
-                    sendMessage()
-                }
-            
-            if isUploadingImage {
-                ProgressView()
-                    .progressViewStyle(.circular)
-            } else {
+            // Input Bar
+            HStack(spacing: 12) {
+                TextField("Message...", text: $messageText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...5)
+                
                 Button(action: sendMessage) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 32))
@@ -152,22 +74,79 @@ struct ChatView: View {
                 }
                 .disabled(messageText.isEmpty)
             }
+            .padding()
+            .background(Color(.systemBackground))
         }
-        .padding()
-        .background(Color(uiColor: .systemBackground))
-    }
-    
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastMessage = messages.last {
-            withAnimation {
-                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+        .navigationTitle(conversation.isGroup ? (conversation.name ?? "Group Chat") : "Chat")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if conversation.isGroup {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    NavigationLink(destination: GroupInfoView(conversation: conversation)) {
+                        Image(systemName: "info.circle")
+                    }
+                }
             }
         }
+        .onAppear {
+            InAppNotificationService.shared.activeConversationID = conversation.id
+            startListening()
+            
+            // Call async functions properly
+            Task {
+                await markAsRead()
+                await markMessagesAsDelivered()
+            }
+        }
+        .onDisappear {
+            InAppNotificationService.shared.activeConversationID = nil
+            listener?.remove()
+        }
+    }
+    
+    private func startListening() {
+        let db = Firestore.firestore()
+        
+        listener = db.collection("conversations")
+            .document(conversation.id)
+            .collection("messages")
+            .order(by: "timestamp", descending: false)
+            .addSnapshotListener { snapshot, error in
+                guard let snapshot = snapshot else {
+                    print("Error listening to messages: \(error?.localizedDescription ?? "Unknown")")
+                    isLoading = false
+                    return
+                }
+                
+                var newMessages: [Message] = []
+                
+                for document in snapshot.documents {
+                    var data = document.data()
+                    
+                    // Convert Firestore Timestamp to Date
+                    if let timestamp = data["timestamp"] as? Timestamp {
+                        data["timestamp"] = timestamp.dateValue()
+                    }
+                    
+                    if let message = Message.fromDictionary(data) {
+                        newMessages.append(message)
+                    }
+                }
+                
+                self.messages = newMessages
+                self.isLoading = false
+                
+                // Automatically mark as read when new messages arrive while viewing
+                Task {
+                    await self.markAsRead()
+                    await self.updateMessageStatuses()
+                }
+            }
     }
     
     private func sendMessage() {
-        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let currentUser = authViewModel.currentUser else {
+        guard let currentUser = authViewModel.currentUser,
+              !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
         
@@ -180,266 +159,262 @@ struct ChatView: View {
             senderID: currentUser.id,
             content: content,
             timestamp: Date(),
-            status: .sending,
+            status: .sent,
             type: .text
         )
         
-        modelContext.insert(message)
-        
         Task {
+            let db = Firestore.firestore()
+            
             do {
-                let db = Firestore.firestore()
+                var messageData = message.toDictionary()
+                messageData["timestamp"] = Timestamp(date: message.timestamp)
+                messageData["status"] = "sent"
+                
+                // Send message to Firestore
                 try await db.collection("conversations")
                     .document(conversation.id)
                     .collection("messages")
                     .document(message.id)
-                    .setData(message.toDictionary())
+                    .setData(messageData)
                 
-                try await ConversationService.shared.updateLastMessage(
-                    conversationID: conversation.id,
-                    message: content
-                )
+                // Update conversation's last message
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .updateData([
+                        "lastMessage": content,
+                        "lastMessageTime": Timestamp(date: Date()),
+                        "lastSenderID": currentUser.id
+                    ])
                 
-                message.status = .sent
-                try modelContext.save()
+                print("✅ Message sent successfully")
             } catch {
-                print("Error sending message: \(error)")
+                print("❌ Error sending message: \(error)")
             }
         }
     }
     
-    private func setupRealtimeListener() {
+    private func markAsRead() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
         let db = Firestore.firestore()
         
-        listener = db.collection("conversations")
-            .document(conversation.id)
-            .collection("messages")
-            .order(by: "timestamp")
-            .addSnapshotListener { snapshot, error in
-                guard let snapshot = snapshot else {
-                    print("Error fetching messages: \(error?.localizedDescription ?? "Unknown")")
-                    return
-                }
+        do {
+            try await db.collection("conversations")
+                .document(conversation.id)
+                .updateData([
+                    "lastReadTime": Timestamp(date: Date())
+                ])
+            
+            print("✅ Marked conversation as read")
+        } catch {
+            print("❌ Error marking as read: \(error)")
+        }
+    }
+    
+    private func markMessagesAsDelivered() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        let db = Firestore.firestore()
+        
+        // Give a small delay to ensure messages are loaded
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        
+        // Update messages that are "sent" to "delivered" when conversation is opened
+        for message in messages where message.senderID != currentUser.id && message.status == .sent {
+            do {
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .updateData([
+                        "status": "delivered"
+                    ])
                 
-                for change in snapshot.documentChanges {
-                    if change.type == .added {
-                        if let message = Message.fromDictionary(change.document.data()) {
-                            let existingMessage = allMessages.first { $0.id == message.id }
-                            if existingMessage == nil {
-                                modelContext.insert(message)
-                                try? modelContext.save()
+                print("✅ Marked message as delivered: \(message.id)")
+            } catch {
+                print("❌ Error marking as delivered: \(error)")
+            }
+        }
+    }
+    
+    private func updateMessageStatuses() {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        Task {
+            let db = Firestore.firestore()
+            
+            // Update messages from other users
+            for message in messages where message.senderID != currentUser.id {
+                // Check if current user already marked as read
+                guard !message.readBy.contains(currentUser.id) else { continue }
+                
+                do {
+                    // Add current user to readBy array
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .collection("messages")
+                        .document(message.id)
+                        .updateData([
+                            "readBy": FieldValue.arrayUnion([currentUser.id])
+                        ])
+                    
+                    // For non-group chats, update status to "read"
+                    if !conversation.isGroup {
+                        try await db.collection("conversations")
+                            .document(conversation.id)
+                            .collection("messages")
+                            .document(message.id)
+                            .updateData([
+                                "status": "read"
+                            ])
+                    }
+                    
+                    print("✅ Marked message as read: \(message.id)")
+                } catch {
+                    print("❌ Error updating message status: \(error)")
+                }
+            }
+            
+            // For group chats, check if all participants have read and update status
+            if conversation.isGroup {
+                await updateGroupChatReadStatus()
+            }
+        }
+    }
+    
+    private func updateGroupChatReadStatus() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        let db = Firestore.firestore()
+        
+        // Get all messages sent by current user
+        for message in messages where message.senderID == currentUser.id {
+            // Check if all other participants have read the message
+            let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+            let allRead = otherParticipants.allSatisfy { participantID in
+                message.readBy.contains(participantID)
+            }
+            
+            // Update status based on read state
+            let newStatus: String
+            if allRead {
+                newStatus = "read"
+            } else if !message.readBy.isEmpty {
+                newStatus = "delivered"
+            } else {
+                newStatus = "sent"
+            }
+            
+            // Only update if status changed
+            if newStatus != message.statusRaw {
+                do {
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .collection("messages")
+                        .document(message.id)
+                        .updateData([
+                            "status": newStatus
+                        ])
+                    
+                    print("✅ Updated group message status to \(newStatus): \(message.id)")
+                } catch {
+                    print("❌ Error updating group message status: \(error)")
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Message Bubble
+
+struct MessageBubble: View {
+    let message: Message
+    let isCurrentUser: Bool
+    let isGroupChat: Bool
+    @State private var showReadReceipts = false
+    
+    var body: some View {
+        HStack {
+            if isCurrentUser { Spacer() }
+            
+            VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 4) {
+                Text(message.content)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(isCurrentUser ? Color.blue : Color(.systemGray5))
+                    .foregroundColor(isCurrentUser ? .white : .primary)
+                    .cornerRadius(18)
+                    .onLongPressGesture {
+                        if isCurrentUser && isGroupChat && !message.readBy.isEmpty {
+                            showReadReceipts = true
+                        }
+                    }
+                
+                HStack(spacing: 4) {
+                    Text(formattedTime)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    // Read receipt checkmarks (only for sent messages)
+                    if isCurrentUser {
+                        HStack(spacing: 2) {
+                            Image(systemName: statusIcon)
+                                .font(.caption2)
+                                .foregroundColor(statusColor)
+                            
+                            // Show read count for group messages
+                            if isGroupChat && !message.readBy.isEmpty {
+                                Text("\(message.readBy.count)")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(statusColor)
                             }
                         }
                     }
                 }
             }
-        
-        typingListener = PresenceService.shared.listenToTyping(conversationID: conversation.id) { userIDs in
-            typingUsers = userIDs
+            
+            if !isCurrentUser { Spacer() }
+        }
+        .sheet(isPresented: $showReadReceipts) {
+            ReadReceiptsView(message: message)
         }
     }
     
-    private func handleTyping(_ text: String) {
-        guard let currentUser = authViewModel.currentUser else { return }
-        
-        typingTimer?.invalidate()
-        
-        if !text.isEmpty {
-            Task {
-                await PresenceService.shared.setTyping(
-                    conversationID: conversation.id,
-                    userID: currentUser.id,
-                    isTyping: true
-                )
-            }
-            
-            typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
-                Task {
-                    await PresenceService.shared.setTyping(
-                        conversationID: conversation.id,
-                        userID: currentUser.id,
-                        isTyping: false
-                    )
-                }
-            }
-        } else {
-            Task {
-                await PresenceService.shared.setTyping(
-                    conversationID: conversation.id,
-                    userID: currentUser.id,
-                    isTyping: false
-                )
-            }
+    private var formattedTime: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter.string(from: message.timestamp)
+    }
+    
+    private var statusIcon: String {
+        switch message.status {
+        case .sending:
+            return "clock"
+        case .sent:
+            return "checkmark"
+        case .delivered:
+            return "checkmark.circle"
+        case .read:
+            return "checkmark.circle.fill"
         }
     }
     
-    private func markMessagesAsRead() {
-        guard let currentUser = authViewModel.currentUser else { return }
-        
-        let unreadMessages = messages.filter { message in
-            message.senderID != currentUser.id &&
-            !message.readBy.contains(currentUser.id)
-        }
-        
-        for message in unreadMessages {
-            if !message.readBy.contains(currentUser.id) {
-                message.readBy.append(currentUser.id)
-            }
-            
-            Task {
-                let db = Firestore.firestore()
-                try? await db.collection("conversations")
-                    .document(conversation.id)
-                    .collection("messages")
-                    .document(message.id)
-                    .updateData([
-                        "readBy": FieldValue.arrayUnion([currentUser.id])
-                    ])
-            }
-        }
-    }
-    
-    private func uploadSelectedImage() {
-        guard let selectedImage = selectedImage,
-              let currentUser = authViewModel.currentUser else {
-            return
-        }
-        
-        isUploadingImage = true
-        
-        Task {
-            do {
-                guard let imageData = try await selectedImage.loadTransferable(type: Data.self),
-                      let uiImage = UIImage(data: imageData) else {
-                    isUploadingImage = false
-                    return
-                }
-                
-                let imageURL = try await MediaService.shared.uploadImage(uiImage, conversationID: conversation.id)
-                
-                let message = Message(
-                    id: UUID().uuidString,
-                    conversationID: conversation.id,
-                    senderID: currentUser.id,
-                    content: "[Image]",
-                    timestamp: Date(),
-                    status: .sending,
-                    type: .image,
-                    mediaURL: imageURL
-                )
-                
-                modelContext.insert(message)
-                
-                let db = Firestore.firestore()
-                try await db.collection("conversations")
-                    .document(conversation.id)
-                    .collection("messages")
-                    .document(message.id)
-                    .setData(message.toDictionary())
-                
-                try await ConversationService.shared.updateLastMessage(
-                    conversationID: conversation.id,
-                    message: "[Image]"
-                )
-                
-                message.status = .sent
-                try modelContext.save()
-                
-                self.selectedImage = nil
-            } catch {
-                print("Error uploading image: \(error)")
-            }
-            
-            isUploadingImage = false
+    private var statusColor: Color {
+        switch message.status {
+        case .sending:
+            return .gray
+        case .sent:
+            return .gray
+        case .delivered:
+            return .gray
+        case .read:
+            return .blue
         }
     }
 }
 
-struct MessageBubble: View {
-    let message: Message
-    let isFromCurrentUser: Bool
-    let conversation: Conversation
-    
-    var body: some View {
-        HStack {
-            if isFromCurrentUser { Spacer() }
-            
-            VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
-                if conversation.isGroup && !isFromCurrentUser {
-                    Text(message.senderID)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                
-                if message.type == .image, let mediaURL = message.mediaURL {
-                    AsyncImage(url: URL(string: mediaURL)) { phase in
-                        switch phase {
-                        case .empty:
-                            ProgressView()
-                                .frame(width: 200, height: 200)
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(maxWidth: 250, maxHeight: 300)
-                                .cornerRadius(12)
-                                .clipped()
-                        case .failure:
-                            Image(systemName: "photo")
-                                .frame(width: 200, height: 200)
-                                .background(Color.gray.opacity(0.2))
-                                .cornerRadius(12)
-                        @unknown default:
-                            EmptyView()
-                        }
-                    }
-                } else {
-                    Text(message.content)
-                        .padding(12)
-                        .background(isFromCurrentUser ? Color.blue : Color(uiColor: .systemGray5))
-                        .foregroundColor(isFromCurrentUser ? .white : .primary)
-                        .cornerRadius(16)
-                }
-                
-                HStack(spacing: 4) {
-                    Text(formatTime(message.timestamp))
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                    
-                    if isFromCurrentUser {
-                        readReceiptIcon
-                    }
-                }
-            }
-            
-            if !isFromCurrentUser { Spacer() }
-        }
-    }
-    
-    private var readReceiptIcon: some View {
-        Group {
-            if message.readBy.count > 1 {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.caption2)
-                    .foregroundColor(.blue)
-            } else if message.status == .delivered {
-                Image(systemName: "checkmark.circle")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            } else if message.status == .sent {
-                Image(systemName: "checkmark")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-    
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-}
+// MARK: - Preview
 
 #Preview {
     NavigationStack {

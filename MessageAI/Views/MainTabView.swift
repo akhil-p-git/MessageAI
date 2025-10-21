@@ -39,29 +39,117 @@ struct ProfileView: View {
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
+            List {
+                // User Info Section
+                Section {
+                    HStack(spacing: 16) {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.blue, Color.blue.opacity(0.7)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 70, height: 70)
+                            .overlay(
+                                Text(authViewModel.currentUser?.displayName.prefix(1).uppercased() ?? "?")
+                                    .font(.system(size: 32, weight: .bold))
+                                    .foregroundColor(.white)
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(authViewModel.currentUser?.displayName ?? "Unknown")
+                                .font(.title3)
+                                .fontWeight(.semibold)
+                            
+                            Text(authViewModel.currentUser?.email ?? "")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                }
                 
-                if let user = authViewModel.currentUser {
-                    Text(user.displayName)
-                        .font(.title2)
-                        .bold()
+                // Settings Section
+                Section("Settings") {
+                    NavigationLink(destination: EditProfileView()) {
+                        Label("Edit Profile", systemImage: "person.circle")
+                    }
                     
-                    Text(user.email)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    NavigationLink(destination: NotificationsSettingsView()) {
+                        Label("Notifications", systemImage: "bell")
+                    }
+                    
+                    NavigationLink(destination: PrivacySettingsView()) {
+                        Label("Privacy", systemImage: "lock.shield")
+                    }
                 }
                 
-                Button("Sign Out") {
-                    authViewModel.signOut()
+                // About Section
+                Section("About") {
+                    NavigationLink(destination: HelpSupportView()) {
+                        Label("Help & Support", systemImage: "questionmark.circle")
+                    }
+                    
+                    NavigationLink(destination: TermsOfServiceView()) {
+                        Label("Terms of Service", systemImage: "doc.text")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
+                
+                // Sign Out Section
+                Section {
+                    Button(action: {
+                        authViewModel.signOut()
+                    }) {
+                        HStack {
+                            Spacer()
+                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                    }
+                }
             }
             .navigationTitle("Profile")
         }
+    }
+}
+
+// MARK: - Placeholder Views for Settings
+
+struct EditProfileView: View {
+    var body: some View {
+        Text("Edit Profile")
+            .navigationTitle("Edit Profile")
+    }
+}
+
+struct NotificationsSettingsView: View {
+    var body: some View {
+        Text("Notifications Settings")
+            .navigationTitle("Notifications")
+    }
+}
+
+struct PrivacySettingsView: View {
+    var body: some View {
+        Text("Privacy Settings")
+            .navigationTitle("Privacy")
+    }
+}
+
+struct HelpSupportView: View {
+    var body: some View {
+        Text("Help & Support")
+            .navigationTitle("Help & Support")
+    }
+}
+
+struct TermsOfServiceView: View {
+    var body: some View {
+        Text("Terms of Service")
+            .navigationTitle("Terms of Service")
     }
 }
 

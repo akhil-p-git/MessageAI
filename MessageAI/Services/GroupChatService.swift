@@ -13,6 +13,9 @@ class GroupChatService {
     func createGroupChat(name: String, participantIDs: [String], creatorID: String, modelContext: ModelContext) async throws -> Conversation {
         let conversationID = UUID().uuidString
         
+        // Get creator name
+        let creatorUser = try await AuthService.shared.fetchUserDocument(userId: creatorID)
+        
         let conversation = Conversation(
             id: conversationID,
             isGroup: true,
@@ -22,28 +25,32 @@ class GroupChatService {
             lastMessageTime: Date()
         )
         
-        // Save to Firestore
-        try await db.collection("conversations").document(conversationID).setData(conversation.toDictionary())
+        var firestoreData = conversation.toDictionary()
+        firestoreData["lastMessageTime"] = Timestamp(date: Date())
+        firestoreData["lastSenderID"] = creatorID
         
-        // Save to SwiftData
+        try await db.collection("conversations").document(conversationID).setData(firestoreData)
         modelContext.insert(conversation)
+        try? modelContext.save()
         
-        // Send system message
         let systemMessage = Message(
             id: UUID().uuidString,
             conversationID: conversationID,
             senderID: "system",
-            content: "Group chat created by \(creatorID)",
+            content: "\(creatorUser.displayName) created the group",
             timestamp: Date(),
             status: .sent,
             type: .text
         )
         
+        var messageData = systemMessage.toDictionary()
+        messageData["timestamp"] = Timestamp(date: Date())
+        
         try await db.collection("conversations")
             .document(conversationID)
             .collection("messages")
             .document(systemMessage.id)
-            .setData(systemMessage.toDictionary())
+            .setData(messageData)
         
         return conversation
     }
@@ -59,10 +66,4 @@ class GroupChatService {
             "participantIDs": FieldValue.arrayRemove([userID])
         ])
     }
-}//
-//  GroupChatServices.swift
-//  MessageAI
-//
-//  Created by Akhil Pinnani on 10/20/25.
-//
-
+}
