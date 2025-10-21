@@ -25,6 +25,9 @@ class AuthViewModel: ObservableObject {
                 do {
                     let user = try await authService.fetchUserDocument(userId: firebaseUser.uid)
                     self.currentUser = user
+                    Task {
+                        await PresenceService.shared.setUserOnline(userID: user.id, isOnline: true)
+                    }
                 } catch {
                     print("Error fetching user: \(error)")
                 }
@@ -56,6 +59,11 @@ class AuthViewModel: ObservableObject {
         do {
             let user = try await authService.signIn(email: email, password: password)
             self.currentUser = user
+            
+            // Set user online after successful sign in
+            Task {
+                await PresenceService.shared.setUserOnline(userID: user.id, isOnline: true)
+            }
         } catch {
             self.errorMessage = error.localizedDescription
         }
@@ -65,6 +73,11 @@ class AuthViewModel: ObservableObject {
     
     func signOut() {
         do {
+            if let currentUser = currentUser {
+                Task {
+                    await PresenceService.shared.setUserOnline(userID: currentUser.id, isOnline: false)
+                }
+            }
             try authService.signOut()
             currentUser = nil
         } catch {

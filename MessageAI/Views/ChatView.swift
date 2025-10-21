@@ -9,6 +9,9 @@ struct ChatView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     
     @Query private var allMessages: [Message]
+    @State private var typingUsers: [String] = []
+    @State private var typingListener: ListenerRegistration?
+    @State private var typingTimer: Timer?
     @State private var messageText = ""
     @State private var listener: ListenerRegistration?
     @State private var showGroupInfo = false
@@ -42,11 +45,35 @@ struct ChatView: View {
         }
         .onDisappear {
             listener?.remove()
+            typingListener?.remove()
+            typingTimer?.invalidate()
+            
+            // Clear typing status when leaving
+            if let currentUser = authViewModel.currentUser {
+                Task {
+                    await PresenceService.shared.setTyping(
+                        conversationID: conversation.id,
+                        userID: currentUser.id,
+                        isTyping: false
+                    )
+                }
+            }
         }
     }
 
     private var conversationTitle: String {
         conversation.isGroup ? (conversation.name ?? "Group Chat") : "Chat"
+    }
+    
+    private var typingText: String? {
+        let otherTypingUsers = typingUsers.filter { $0 != authViewModel.currentUser?.id }
+        guard !otherTypingUsers.isEmpty else { return nil }
+        
+        if otherTypingUsers.count == 1 {
+            return "typing..."
+        } else {
+            return "\(otherTypingUsers.count) people typing..."
+        }
     }
 
     private var messagesView: some View {
@@ -61,10 +88,25 @@ struct ChatView: View {
                         )
                         .id(message.id)
                     }
+                    
+                    // Typing Indicator
+                    if let typingText = typingText {
+                        HStack {
+                            Text(typingText)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .italic()
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                    }
                 }
                 .padding()
             }
             .onChange(of: messages.count) { _, _ in
+                scrollToBottom(proxy: proxy)
+            }
+            .onChange(of: typingText) { _, _ in
                 scrollToBottom(proxy: proxy)
             }
             .onAppear {
@@ -78,6 +120,9 @@ struct ChatView: View {
             TextField("Message...", text: $messageText)
                 .textFieldStyle(.roundedBorder)
                 .submitLabel(.send)
+                .onChange(of: messageText) { _, newValue in
+                    handleTyping(newValue)
+                }
                 .onSubmit {
                     sendMessage()
                 }
@@ -100,6 +145,7 @@ struct ChatView: View {
             }
         }
     }
+    
     private func sendMessage() {
         guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let currentUser = authViewModel.currentUser else {
@@ -173,6 +219,47 @@ struct ChatView: View {
                     }
                 }
             }
+            typingListener = PresenceService.shared.listenToTyping(conversationID: conversation.id) { userIDs in
+                typingUsers = userIDs
+            }
+    }
+    
+    private func handleTyping(_ text: String) {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        // Cancel existing timer
+        typingTimer?.invalidate()
+        
+        if !text.isEmpty {
+            // User is typing
+            Task {
+                await PresenceService.shared.setTyping(
+                    conversationID: conversation.id,
+                    userID: currentUser.id,
+                    isTyping: true
+                )
+            }
+            
+            // Set timer to clear typing status after 3 seconds
+            typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+                Task {
+                    await PresenceService.shared.setTyping(
+                        conversationID: conversation.id,
+                        userID: currentUser.id,
+                        isTyping: false
+                    )
+                }
+            }
+        } else {
+            // User cleared text
+            Task {
+                await PresenceService.shared.setTyping(
+                    conversationID: conversation.id,
+                    userID: currentUser.id,
+                    isTyping: false
+                )
+            }
+        }
     }
 }
 

@@ -100,18 +100,32 @@ struct ConversationListView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
+    @State private var isOnline = false
     
     var body: some View {
         HStack(spacing: 12) {
-            // Avatar
-            Circle()
-                .fill(Color.blue.opacity(0.2))
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Text(conversation.name?.prefix(1).uppercased() ?? "DM")
-                        .font(.headline)
-                        .foregroundColor(.blue)
-                )
+            // Avatar with online indicator
+            ZStack(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(Color.blue.opacity(0.2))
+                    .frame(width: 50, height: 50)
+                    .overlay(
+                        Text(conversation.name?.prefix(1).uppercased() ?? "DM")
+                            .font(.headline)
+                            .foregroundColor(.blue)
+                    )
+                
+                // Online indicator (only for 1-on-1 chats)
+                if !conversation.isGroup && isOnline {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 14, height: 14)
+                        .overlay(
+                            Circle()
+                                .stroke(Color(uiColor: .systemBackground), lineWidth: 2)
+                        )
+                }
+            }
             
             // Content
             VStack(alignment: .leading, spacing: 4) {
@@ -146,6 +160,24 @@ struct ConversationRow: View {
             }
         }
         .padding(.vertical, 4)
+        .onAppear {
+            checkOnlineStatus()
+        }
+    }
+    
+    private func checkOnlineStatus() {
+        // For 1-on-1 chats, check if the other user is online
+        guard !conversation.isGroup else { return }
+        
+        // Get the other user's ID
+        // This is simplified - you'd want to filter out the current user's ID
+        if let otherUserID = conversation.participantIDs.first {
+            let db = Firestore.firestore()
+            db.collection("users").document(otherUserID).addSnapshotListener { snapshot, error in
+                guard let data = snapshot?.data() else { return }
+                isOnline = data["isOnline"] as? Bool ?? false
+            }
+        }
     }
     
     private func formatTime(_ date: Date) -> String {
