@@ -1,172 +1,108 @@
 import Foundation
 import FirebaseFirestore
-import SwiftUI
+import UserNotifications
 import Combine
 
 @MainActor
 class InAppNotificationService: ObservableObject {
     static let shared = InAppNotificationService()
     
-    @Published var notifications: [NotificationItem] = []
-    @Published var activeConversationID: String?
+    @Published var showNotification = false
+    @Published var notificationMessage = ""
+    @Published var notificationTitle = ""
+    @Published var conversationID: String?
+    
+    var activeConversationID: String?
     
     private var listener: ListenerRegistration?
-    private var messageListeners: [String: ListenerRegistration] = [:]
-    private var currentUserID: String?
-    private var processedMessageIDs = Set<String>()
-    private var lastCheckTime = Date()
+    private let db = Firestore.firestore()
+    private var lastNotificationID: String?
     
     private init() {}
     
     func startListening(userID: String) {
-        guard currentUserID == nil || currentUserID != userID else {
-            print("⚠️ Already listening for user: \(userID)")
+        listener = db.collection("conversations")
+            .whereField("participantIDs", arrayContains: userID)
+            .addSnapshotListener { snapshot, error in
+                guard let snapshot = snapshot else {
+                    return
+                }
+                
+                for change in snapshot.documentChanges {
+                    if change.type == .modified {
+                        Task {
+                            await self.handleConversationUpdate(change.document, userID: userID)
+                        }
+                    }
+                }
+            }
+    }
+    
+    private func handleConversationUpdate(_ document: QueryDocumentSnapshot, userID: String) async {
+        let data = document.data()
+        
+        guard let lastSenderID = data["lastSenderID"] as? String,
+              lastSenderID != userID,
+              let lastMessage = data["lastMessage"] as? String,
+              let conversationID = data["id"] as? String,
+              let lastMessageTime = data["lastMessageTime"] as? Timestamp else {
             return
         }
         
-        self.currentUserID = userID
-        self.lastCheckTime = Date()
+        // Don't show notification if user is viewing this conversation
+        guard conversationID != activeConversationID else {
+            return
+        }
         
-        let db = Firestore.firestore()
+        // Create unique notification ID
+        let notificationID = "\(conversationID)-\(lastMessageTime.seconds)"
         
-        listener = db.collection("conversations")
-            .whereField("participantIDs", arrayContains: userID)
-            .addSnapshotListener { [weak self] snapshot, error in
-                guard let self = self,
-                      let snapshot = snapshot else {
-                    print("Error listening to conversations: \(error?.localizedDescription ?? "Unknown")")
-                    return
-                }
-                
-                for document in snapshot.documents {
-                    let conversationID = document.documentID
-                    
-                    if self.messageListeners[conversationID] == nil {
-                        self.listenToMessages(conversationID: conversationID)
-                    }
-                }
-            }
-    }
-    
-    private func listenToMessages(conversationID: String) {
-        let db = Firestore.firestore()
+        // Don't show if this is the same notification we just showed
+        guard notificationID != lastNotificationID else {
+            return
+        }
         
-        let listener = db.collection("conversations")
-            .document(conversationID)
-            .collection("messages")
-            .whereField("timestamp", isGreaterThan: Timestamp(date: lastCheckTime))
-            .addSnapshotListener { [weak self] snapshot, error in
-                guard let self = self,
-                      let snapshot = snapshot else {
-                    return
-                }
-                
-                for document in snapshot.documents {
-                    let data = document.data()
-                    let messageID = document.documentID
-                    
-                    guard !self.processedMessageIDs.contains(messageID) else {
-                        continue
-                    }
-                    
-                    guard let senderID = data["senderID"] as? String,
-                          senderID != self.currentUserID,
-                          let content = data["content"] as? String,
-                          let timestamp = data["timestamp"] as? Timestamp,
-                          timestamp.dateValue() > self.lastCheckTime else {
-                        self.processedMessageIDs.insert(messageID)
-                        continue
-                    }
-                    
-                    self.processedMessageIDs.insert(messageID)
-                    self.fetchConversationDetails(conversationID: conversationID, message: content)
-                }
-            }
+        // Don't show notification for group creation message if user is the creator
+        if let creatorID = data["creatorID"] as? String,
+           creatorID == userID,
+           lastMessage.contains("created") {
+            return
+        }
         
-        messageListeners[conversationID] = listener
-    }
-    
-    private func fetchConversationDetails(conversationID: String, message: String) {
-        let db = Firestore.firestore()
+        // Fetch sender info
+        guard let sender = try? await AuthService.shared.fetchUserDocument(userId: lastSenderID) else {
+            return
+        }
         
-        db.collection("conversations").document(conversationID).getDocument { [weak self] snapshot, error in
-            guard let self = self,
-                  let data = snapshot?.data() else {
-                return
-            }
-            
-            let isGroup = data["isGroup"] as? Bool ?? false
-            
-            let title: String
+        let isGroup = data["isGroup"] as? Bool ?? false
+        let groupName = data["name"] as? String
+        
+        await MainActor.run {
             if isGroup {
-                let groupName = data["name"] as? String ?? "Group Chat"
-                if let createdByName = data["createdByName"] as? String,
-                   message.contains("created") {
-                    // Group creation notification
-                    title = "\(createdByName) added you to \"\(groupName)\""
-                } else {
-                    // Regular group message
-                    title = groupName
-                }
+                self.notificationTitle = groupName ?? "Group Chat"
+                self.notificationMessage = "\(sender.displayName): \(lastMessage)"
             } else {
-                title = "New Message"
+                self.notificationTitle = sender.displayName
+                self.notificationMessage = lastMessage
             }
             
-            Task { @MainActor in
-                self.showNotification(
-                    conversationID: conversationID,
-                    title: title,
-                    message: message
-                )
+            self.conversationID = conversationID
+            self.lastNotificationID = notificationID
+            self.showNotification = true
+            
+            // Auto-hide after 4 seconds
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                await MainActor.run {
+                    self.showNotification = false
+                }
             }
         }
     }
     
     func stopListening() {
         listener?.remove()
-        messageListeners.values.forEach { $0.remove() }
-        messageListeners.removeAll()
-        currentUserID = nil
+        listener = nil
+        lastNotificationID = nil
     }
-    
-    private func showNotification(conversationID: String, title: String, message: String) {
-        // Don't show notification if user is already viewing this conversation
-        guard activeConversationID != conversationID else {
-            print("🔕 Suppressed notification - user is viewing this conversation")
-            return
-        }
-        
-        guard !notifications.contains(where: { $0.conversationID == conversationID }) else {
-            return
-        }
-        
-        let notification = NotificationItem(
-            id: UUID().uuidString,
-            conversationID: conversationID,
-            title: title,
-            message: message,
-            timestamp: Date()
-        )
-        
-        notifications.append(notification)
-        
-        Task {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            await MainActor.run {
-                self.notifications.removeAll { $0.id == notification.id }
-            }
-        }
-    }
-    
-    func dismissNotification(id: String) {
-        notifications.removeAll { $0.id == id }
-    }
-}
-
-struct NotificationItem: Identifiable {
-    let id: String
-    let conversationID: String
-    let title: String
-    let message: String
-    let timestamp: Date
 }

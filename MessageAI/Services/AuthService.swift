@@ -11,31 +11,25 @@ class AuthService {
     
     private init() {}
     
+    // MARK: - Authentication
+    
     func signUp(email: String, password: String, displayName: String) async throws -> User {
-        let result = try await auth.createUser(withEmail: email, password: password)
+        let authResult = try await auth.createUser(withEmail: email, password: password)
         
         let user = User(
-            id: result.user.uid,
+            id: authResult.user.uid,
             email: email,
-            displayName: displayName,
-            isOnline: true,
-            lastSeen: Date()
+            displayName: displayName
         )
         
-        try await createUserDocument(user: user)
+        try await db.collection("users").document(user.id).setData(user.toDictionary())
+        
         return user
     }
     
     func signIn(email: String, password: String) async throws -> User {
-        let result = try await auth.signIn(withEmail: email, password: password)
-        let user = try await fetchUserDocument(userId: result.user.uid)
-        
-        // Update online status
-        try await db.collection("users").document(result.user.uid).updateData([
-            "isOnline": true,
-            "lastSeen": Date()
-        ])
-        
+        let authResult = try await auth.signIn(withEmail: email, password: password)
+        let user = try await fetchUserDocument(userId: authResult.user.uid)
         return user
     }
     
@@ -43,13 +37,15 @@ class AuthService {
         try auth.signOut()
     }
     
-    func getCurrentUser() -> FirebaseAuth.User? {
-        return auth.currentUser
+    func getCurrentUser() async throws -> User? {
+        guard let firebaseUser = auth.currentUser else {
+            return nil
+        }
+        
+        return try await fetchUserDocument(userId: firebaseUser.uid)
     }
     
-    func createUserDocument(user: User) async throws {
-        try await db.collection("users").document(user.id).setData(user.toDictionary())
-    }
+    // MARK: - User Management
     
     func fetchUserDocument(userId: String) async throws -> User {
         let document = try await db.collection("users").document(userId).getDocument()
@@ -62,20 +58,56 @@ class AuthService {
         return user
     }
     
-    func findUserByEmail(_ email: String) async throws -> User {
-            let snapshot = try await db.collection("users")
-                .whereField("email", isEqualTo: email.lowercased())
-                .limit(to: 1)
-                .getDocuments()
-            
-            guard let document = snapshot.documents.first else {
-                throw NSError(domain: "AuthService", code: 404, userInfo: [NSLocalizedDescriptionKey: "User not found"])
+    func fetchAllUsers() async throws -> [User] {
+        let snapshot = try await db.collection("users").getDocuments()
+        
+        var users: [User] = []
+        
+        for document in snapshot.documents {
+            if let user = User.fromDictionary(document.data()) {
+                users.append(user)
             }
-            
-            guard let user = User.fromDictionary(document.data()) else {
-                throw NSError(domain: "AuthService", code: 500, userInfo: [NSLocalizedDescriptionKey: "Failed to parse user"])
-            }
-            
-            return user
         }
+        
+        return users
+    }
+    
+    func findUserByEmail(email: String) async throws -> User? {
+        let snapshot = try await db.collection("users")
+            .whereField("email", isEqualTo: email.lowercased())
+            .limit(to: 1)
+            .getDocuments()
+        
+        guard let document = snapshot.documents.first,
+              let user = User.fromDictionary(document.data()) else {
+            return nil
+        }
+        
+        return user
+    }
+    
+    func updateUserProfile(userId: String, displayName: String?, profilePictureURL: String?) async throws {
+        var updateData: [String: Any] = [:]
+        
+        if let displayName = displayName {
+            updateData["displayName"] = displayName
+        }
+        
+        if let profilePictureURL = profilePictureURL {
+            updateData["profilePictureURL"] = profilePictureURL
+        }
+        
+        if !updateData.isEmpty {
+            try await db.collection("users").document(userId).updateData(updateData)
+        }
+    }
+    
+    func searchUsers(query: String) async throws -> [User] {
+        let allUsers = try await fetchAllUsers()
+        
+        return allUsers.filter { user in
+            user.displayName.localizedCaseInsensitiveContains(query) ||
+            user.email.localizedCaseInsensitiveContains(query)
+        }
+    }
 }

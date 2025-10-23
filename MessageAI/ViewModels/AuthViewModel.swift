@@ -15,27 +15,32 @@ class AuthViewModel: ObservableObject {
     private let authService = AuthService.shared
     
     init() {
-        checkAuthState()
+        Task {
+            await checkAuthState()
+        }
     }
     
-    func checkAuthState() {
+    func checkAuthState() async {
         isLoading = true
-        if let firebaseUser = authService.getCurrentUser() {
-            Task {
-                do {
-                    let user = try await authService.fetchUserDocument(userId: firebaseUser.uid)
-                    self.currentUser = user
-                    Task {
-                        await PresenceService.shared.setUserOnline(userID: user.id, isOnline: true)
-                    }
-                } catch {
-                    print("Error fetching user: \(error)")
+        
+        do {
+            if let firebaseUser = Auth.auth().currentUser {
+                let user = try await authService.fetchUserDocument(userId: firebaseUser.uid)
+                self.currentUser = user
+                
+                // Set user online after successful sign in
+                Task {
+                    await PresenceService.shared.setUserOnline(userID: user.id, isOnline: true)
                 }
-                self.isLoading = false
+            } else {
+                self.currentUser = nil
             }
-        } else {
-            isLoading = false
+        } catch {
+            print("Error fetching user: \(error)")
+            self.currentUser = nil
         }
+        
+        isLoading = false
     }
     
     func signUp(email: String, password: String, displayName: String) async {
@@ -45,6 +50,9 @@ class AuthViewModel: ObservableObject {
         do {
             let user = try await authService.signUp(email: email, password: password, displayName: displayName)
             self.currentUser = user
+            
+            // Set user online after successful sign up
+            await PresenceService.shared.setUserOnline(userID: user.id, isOnline: true)
         } catch {
             self.errorMessage = error.localizedDescription
         }
@@ -73,15 +81,17 @@ class AuthViewModel: ObservableObject {
     
     func signOut() {
         do {
-            if let currentUser = currentUser {
+            // Set user offline before signing out
+            if let userID = currentUser?.id {
                 Task {
-                    await PresenceService.shared.setUserOnline(userID: currentUser.id, isOnline: false)
+                    await PresenceService.shared.setUserOnline(userID: userID, isOnline: false)
                 }
             }
+            
             try authService.signOut()
-            currentUser = nil
+            self.currentUser = nil
         } catch {
-            errorMessage = error.localizedDescription
+            self.errorMessage = error.localizedDescription
         }
     }
 }

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 struct NewChatView: View {
     @Environment(\.dismiss) private var dismiss
@@ -10,6 +11,8 @@ struct NewChatView: View {
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var createdConversation: Conversation?
+    @State private var navigateToChat = false
     
     var body: some View {
         NavigationStack {
@@ -21,7 +24,11 @@ struct NewChatView: View {
                     .keyboardType(.emailAddress)
                     .padding()
                 
-                Button(action: startChat) {
+                Button(action: {
+                    Task {
+                        await startChat()
+                    }
+                }) {
                     if isSearching {
                         ProgressView()
                             .progressViewStyle(.circular)
@@ -46,54 +53,62 @@ struct NewChatView: View {
                 }
             }
             .alert("Error", isPresented: $showError) {
-                Button("OK") { }
+                Button("OK") {}
             } message: {
                 Text(errorMessage ?? "Unknown error")
+            }
+            .navigationDestination(isPresented: $navigateToChat) {
+                if let conversation = createdConversation {
+                    ChatView(conversation: conversation)
+                }
             }
         }
     }
     
-    private func startChat() {
+    private func startChat() async {
         guard let currentUser = authViewModel.currentUser else { return }
         
         isSearching = true
         errorMessage = nil
         
-        Task {
-            do {
-                let otherUser = try await AuthService.shared.findUserByEmail(email.lowercased())
-                
-                if otherUser.id == currentUser.id {
-                    errorMessage = "You cannot start a chat with yourself"
-                    showError = true
-                    isSearching = false
-                    return
-                }
-                
-                _ = try await ConversationService.shared.findOrCreateConversation(
-                    currentUserID: currentUser.id,
-                    otherUserID: otherUser.id,
-                    modelContext: modelContext
-                )
-                
-                dismiss()
-            } catch {
-                errorMessage = error.localizedDescription
+        do {
+            let otherUser = try await AuthService.shared.findUserByEmail(email: email.lowercased())
+            
+            guard let otherUser = otherUser else {
+                errorMessage = "User not found with email: \(email)"
                 showError = true
+                isSearching = false
+                return
             }
             
-            isSearching = false
+            if otherUser.id == currentUser.id {
+                errorMessage = "You cannot start a chat with yourself"
+                showError = true
+                isSearching = false
+                return
+            }
+            
+            let conversation = try await ConversationService.shared.findOrCreateConversation(
+                currentUserID: currentUser.id,
+                otherUserID: otherUser.id,
+                modelContext: modelContext
+            )
+            
+            await MainActor.run {
+                self.createdConversation = conversation
+                self.navigateToChat = true
+                dismiss()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            showError = true
         }
+        
+        isSearching = false
     }
 }
 
 #Preview {
     NewChatView()
         .environmentObject(AuthViewModel())
-}//
-//  NewChatView.swift
-//  MessageAI
-//
-//  Created by Akhil Pinnani on 10/20/25.
-//
-
+}

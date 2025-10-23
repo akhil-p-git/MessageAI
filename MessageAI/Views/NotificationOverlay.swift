@@ -5,18 +5,21 @@ struct NotificationOverlay: View {
     @Binding var selectedConversationID: String?
     
     var body: some View {
-        VStack(spacing: 8) {
-            ForEach(notificationService.notifications) { notification in
+        VStack {
+            if notificationService.showNotification {
                 NotificationBanner(
-                    notification: notification,
+                    title: notificationService.notificationTitle,
+                    message: notificationService.notificationMessage,
                     onTap: {
-                        selectedConversationID = notification.conversationID
-                        notificationService.dismissNotification(id: notification.id)
+                        selectedConversationID = notificationService.conversationID
+                        notificationService.showNotification = false
                     },
                     onDismiss: {
-                        notificationService.dismissNotification(id: notification.id)
+                        notificationService.showNotification = false
                     }
                 )
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .animation(.spring(), value: notificationService.showNotification)
             }
             
             Spacer()
@@ -27,7 +30,8 @@ struct NotificationOverlay: View {
 }
 
 struct NotificationBanner: View {
-    let notification: NotificationItem
+    let title: String
+    let message: String
     let onTap: () -> Void
     let onDismiss: () -> Void
     
@@ -37,17 +41,17 @@ struct NotificationBanner: View {
                 .fill(Color.blue)
                 .frame(width: 40, height: 40)
                 .overlay(
-                    Text(notification.title.prefix(1).uppercased())
+                    Text(title.prefix(1).uppercased())
                         .foregroundColor(.white)
                         .font(.headline)
                 )
             
             VStack(alignment: .leading, spacing: 4) {
-                Text(notification.title)
+                Text(title)
                     .font(.headline)
                     .foregroundColor(.primary)
                 
-                Text(notification.message)
+                Text(message)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
@@ -63,11 +67,14 @@ struct NotificationBanner: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemBackground))
                 .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
         )
-        .transition(.move(edge: .top).combined(with: .opacity))
         .onTapGesture(perform: onTap)
     }
+}
+
+#Preview {
+    NotificationOverlay(selectedConversationID: .constant(nil))
 }

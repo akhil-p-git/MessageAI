@@ -23,7 +23,9 @@ struct RootView: View {
             }
         }
         .onAppear {
-            authViewModel.checkAuthState()
+            Task {
+                await authViewModel.checkAuthState()
+            }
         }
     }
 }
@@ -37,4 +39,3 @@ struct RootView_Previews: PreviewProvider {
     }
 }
 #endif
-
