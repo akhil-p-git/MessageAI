@@ -96,7 +96,21 @@ class InAppNotificationService: ObservableObject {
             }
             
             let isGroup = data["isGroup"] as? Bool ?? false
-            let title = isGroup ? (data["name"] as? String ?? "Group Chat") : "New Message"
+            
+            let title: String
+            if isGroup {
+                let groupName = data["name"] as? String ?? "Group Chat"
+                if let createdByName = data["createdByName"] as? String,
+                   message.contains("created") {
+                    // Group creation notification
+                    title = "\(createdByName) added you to \"\(groupName)\""
+                } else {
+                    // Regular group message
+                    title = groupName
+                }
+            } else {
+                title = "New Message"
+            }
             
             Task { @MainActor in
                 self.showNotification(

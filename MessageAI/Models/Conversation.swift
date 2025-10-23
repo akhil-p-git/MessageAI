@@ -18,6 +18,7 @@ class Conversation {
     var lastMessageTime: Date
     var unreadCount: Int
     var lastReadTime: Date?
+    var typingUsers: [String] = []
     
     init(id: String, isGroup: Bool, name: String? = nil, participantIDs: [String], lastMessage: String? = nil, lastMessageTime: Date = Date(), unreadCount: Int = 0, lastReadTime: Date? = nil) {
         self.id = id
@@ -28,6 +29,7 @@ class Conversation {
         self.lastMessageTime = lastMessageTime
         self.unreadCount = unreadCount
         self.lastReadTime = lastReadTime
+        self.typingUsers = []
     }
     
     func toDictionary() -> [String: Any] {
@@ -36,7 +38,8 @@ class Conversation {
             "isGroup": isGroup,
             "participantIDs": participantIDs,
             "lastMessageTime": lastMessageTime,
-            "unreadCount": unreadCount
+            "unreadCount": unreadCount,
+            "typingUsers": typingUsers
         ]
         
         if let name = name {
@@ -66,8 +69,9 @@ class Conversation {
         let lastMessageTime = (data["lastMessageTime"] as? Date) ?? Date()
         let unreadCount = data["unreadCount"] as? Int ?? 0
         let lastReadTime = data["lastReadTime"] as? Date
+        let typingUsers = data["typingUsers"] as? [String] ?? []
         
-        return Conversation(
+        let conversation = Conversation(
             id: id,
             isGroup: isGroup,
             name: name,
@@ -77,5 +81,9 @@ class Conversation {
             unreadCount: unreadCount,
             lastReadTime: lastReadTime
         )
+        
+        conversation.typingUsers = typingUsers
+        
+        return conversation
     }
 }

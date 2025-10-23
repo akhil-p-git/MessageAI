@@ -21,23 +21,26 @@ class GroupChatService {
             isGroup: true,
             name: name,
             participantIDs: participantIDs,
-            lastMessage: "Group created",
+            lastMessage: "\(creatorUser.displayName) created the group",
             lastMessageTime: Date()
         )
         
         var firestoreData = conversation.toDictionary()
         firestoreData["lastMessageTime"] = Timestamp(date: Date())
         firestoreData["lastSenderID"] = creatorID
+        firestoreData["createdBy"] = creatorID
+        firestoreData["createdByName"] = creatorUser.displayName
         
         try await db.collection("conversations").document(conversationID).setData(firestoreData)
         modelContext.insert(conversation)
         try? modelContext.save()
         
+        // Send system message with better formatting
         let systemMessage = Message(
             id: UUID().uuidString,
             conversationID: conversationID,
             senderID: "system",
-            content: "\(creatorUser.displayName) created the group",
+            content: "\(creatorUser.displayName) created \"\(name)\"",
             timestamp: Date(),
             status: .sent,
             type: .text

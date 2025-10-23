@@ -3,7 +3,7 @@ import SwiftUI
 struct ReadReceiptsView: View {
     @Environment(\.dismiss) private var dismiss
     let message: Message
-    @State private var readByUsers: [User] = []
+    @State private var readByDetails: [(user: User, timestamp: Date)] = []
     @State private var isLoading = true
     
     var body: some View {
@@ -16,29 +16,30 @@ struct ReadReceiptsView: View {
                         Spacer()
                     }
                     .listRowBackground(Color.clear)
-                } else if readByUsers.isEmpty {
+                } else if readByDetails.isEmpty {
                     Text("No read receipts yet")
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
                 } else {
                     Section {
-                        ForEach(readByUsers) { user in
+                        ForEach(readByDetails, id: \.user.id) { detail in
                             HStack(spacing: 12) {
                                 Circle()
                                     .fill(Color.blue)
                                     .frame(width: 40, height: 40)
                                     .overlay(
-                                        Text(user.displayName.prefix(1).uppercased())
+                                        Text(detail.user.displayName.prefix(1).uppercased())
                                             .foregroundColor(.white)
                                             .font(.headline)
                                     )
                                 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(user.displayName)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(shortenedName(detail.user.displayName))
                                         .font(.body)
                                         .fontWeight(.medium)
+                                        .lineLimit(1)
                                     
-                                    Text(user.email)
+                                    Text(formattedReadTime(detail.timestamp))
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -52,7 +53,7 @@ struct ReadReceiptsView: View {
                             .padding(.vertical, 4)
                         }
                     } header: {
-                        Text("Read by \(readByUsers.count) \(readByUsers.count == 1 ? "person" : "people")")
+                        Text("Read by \(readByDetails.count) \(readByDetails.count == 1 ? "person" : "people")")
                     }
                 }
             }
@@ -66,27 +67,56 @@ struct ReadReceiptsView: View {
                 }
             }
             .task {
-                await fetchReadByUsers()
+                await fetchReadByDetails()
             }
         }
     }
     
-    private func fetchReadByUsers() async {
+    private func shortenedName(_ name: String) -> String {
+        if name.count > 20 {
+            return String(name.prefix(17)) + "..."
+        }
+        return name
+    }
+    
+    private func formattedReadTime(_ date: Date) -> String {
+        let calendar = Calendar.current
+        let now = Date()
+        
+        if calendar.isDateInToday(date) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Read at " + formatter.string(from: date)
+        } else if calendar.isDateInYesterday(date) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Yesterday at " + formatter.string(from: date)
+        } else {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM d 'at' h:mm a"
+            return "Read " + formatter.string(from: date)
+        }
+    }
+    
+    private func fetchReadByDetails() async {
         isLoading = true
         
-        var users: [User] = []
+        var details: [(user: User, timestamp: Date)] = []
         
+        // For now, we'll use the message timestamp as read time
+        // To track actual read times, you'd need to store them in Firestore
         for userID in message.readBy {
             do {
                 let user = try await AuthService.shared.fetchUserDocument(userId: userID)
-                users.append(user)
+                // Using message timestamp as placeholder - in production, store actual read times
+                details.append((user: user, timestamp: message.timestamp))
             } catch {
                 print("Error fetching user: \(error)")
             }
         }
         
         await MainActor.run {
-            self.readByUsers = users
+            self.readByDetails = details
             self.isLoading = false
         }
     }

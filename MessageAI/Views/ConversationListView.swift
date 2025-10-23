@@ -151,22 +151,33 @@ struct ConversationListView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
-    @State private var otherUserName: String = "Loading..."
+    @State private var otherUser: User?
     @State private var hasUnreadMessages: Bool = false
+    @State private var isTyping = false
     @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
         HStack(spacing: 12) {
             // Avatar with blue dot
             ZStack(alignment: .topTrailing) {
-                Circle()
-                    .fill(Color.blue)
-                    .frame(width: 50, height: 50)
-                    .overlay(
-                        Text(avatarText)
-                            .foregroundColor(.white)
-                            .font(.headline)
+                if conversation.isGroup {
+                    // Group avatar
+                    Circle()
+                        .fill(Color.blue)
+                        .frame(width: 50, height: 50)
+                        .overlay(
+                            Text("G")
+                                .foregroundColor(.white)
+                                .font(.headline)
+                        )
+                } else {
+                    // User profile picture
+                    ProfileImageView(
+                        url: otherUser?.profilePictureURL,
+                        size: 50,
+                        fallbackText: otherUser?.displayName ?? "?"
                     )
+                }
                 
                 // Blue unread indicator dot
                 if hasUnreadMessages {
@@ -195,11 +206,18 @@ struct ConversationRow: View {
                 }
                 
                 HStack {
-                    Text(conversation.lastMessage ?? "No messages yet")
-                        .font(.subheadline)
-                        .foregroundColor(hasUnreadMessages ? .primary : .secondary)
-                        .fontWeight(hasUnreadMessages ? .semibold : .regular)
-                        .lineLimit(2)
+                    if isTyping {
+                        Text("typing...")
+                            .font(.subheadline)
+                            .foregroundColor(.blue)
+                            .italic()
+                    } else {
+                        Text(conversation.lastMessage ?? "No messages yet")
+                            .font(.subheadline)
+                            .foregroundColor(hasUnreadMessages ? .primary : .secondary)
+                            .fontWeight(hasUnreadMessages ? .semibold : .regular)
+                            .lineLimit(2)
+                    }
                     
                     Spacer()
                 }
@@ -207,11 +225,15 @@ struct ConversationRow: View {
         }
         .padding(.vertical, 4)
         .task {
-            await fetchOtherUserName()
+            await fetchOtherUser()
             checkUnreadStatus()
+            checkTypingStatus()
         }
         .onChange(of: conversation.lastMessageTime) { _, _ in
             checkUnreadStatus()
+        }
+        .onChange(of: conversation.typingUsers) { _, _ in
+            checkTypingStatus()
         }
     }
     
@@ -219,15 +241,7 @@ struct ConversationRow: View {
         if conversation.isGroup {
             return conversation.name ?? "Group Chat"
         } else {
-            return otherUserName
-        }
-    }
-    
-    private var avatarText: String {
-        if conversation.isGroup {
-            return "G"
-        } else {
-            return String(otherUserName.prefix(1)).uppercased()
+            return otherUser?.displayName ?? "Loading..."
         }
     }
     
@@ -267,7 +281,18 @@ struct ConversationRow: View {
         }
     }
     
-    private func fetchOtherUserName() async {
+    private func checkTypingStatus() {
+        guard let currentUserID = authViewModel.currentUser?.id else {
+            isTyping = false
+            return
+        }
+        
+        // Check if other users are typing
+        let otherUsersTyping = conversation.typingUsers.filter { $0 != currentUserID }
+        isTyping = !otherUsersTyping.isEmpty
+    }
+    
+    private func fetchOtherUser() async {
         guard !conversation.isGroup else { return }
         
         guard let currentUserID = authViewModel.currentUser?.id,
@@ -278,12 +303,10 @@ struct ConversationRow: View {
         do {
             let user = try await AuthService.shared.fetchUserDocument(userId: otherUserID)
             await MainActor.run {
-                self.otherUserName = user.displayName
+                self.otherUser = user
             }
         } catch {
-            await MainActor.run {
-                self.otherUserName = "Unknown User"
-            }
+            print("Error fetching user: \(error)")
         }
     }
 }

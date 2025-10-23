@@ -118,13 +118,6 @@ struct ProfileView: View {
 
 // MARK: - Placeholder Views for Settings
 
-struct EditProfileView: View {
-    var body: some View {
-        Text("Edit Profile")
-            .navigationTitle("Edit Profile")
-    }
-}
-
 struct NotificationsSettingsView: View {
     var body: some View {
         Text("Notifications Settings")

@@ -12,6 +12,8 @@ struct ChatView: View {
     @State private var messages: [Message] = []
     @State private var listener: ListenerRegistration?
     @State private var isLoading = true
+    @State private var isOtherUserTyping = false
+    @State private var typingUserNames: [String] = []
     
     var body: some View {
         VStack(spacing: 0) {
@@ -44,6 +46,24 @@ struct ChatView: View {
                                 )
                                 .id(message.id)
                             }
+                            
+                            // Typing indicator
+                            if isOtherUserTyping {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        if !typingUserNames.isEmpty {
+                                            Text(typingText)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        TypingIndicatorView()
+                                    }
+                                    
+                                    Spacer()
+                                }
+                                .id("typing-indicator")
+                            }
                         }
                         .padding()
                     }
@@ -59,6 +79,13 @@ struct ChatView: View {
                     // Mark messages as read when they appear on screen
                     updateMessageStatuses()
                 }
+                .onChange(of: isOtherUserTyping) { _, isTyping in
+                    if isTyping {
+                        withAnimation {
+                            proxy.scrollTo("typing-indicator", anchor: .bottom)
+                        }
+                    }
+                }
             }
             
             // Input Bar
@@ -66,6 +93,11 @@ struct ChatView: View {
                 TextField("Message...", text: $messageText, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...5)
+                    .onChange(of: messageText) { oldValue, newValue in
+                        // User is typing if there's text
+                        let isTyping = !newValue.isEmpty
+                        handleTypingChange(isTyping)
+                    }
                 
                 Button(action: sendMessage) {
                     Image(systemName: "arrow.up.circle.fill")
@@ -99,9 +131,35 @@ struct ChatView: View {
             }
         }
         .onDisappear {
-            InAppNotificationService.shared.activeConversationID = nil
+            if let currentUser = authViewModel.currentUser {
+                TypingIndicatorService.shared.clearAllTyping(
+                    conversationID: conversation.id,
+                    userID: currentUser.id
+                )
+            }
             listener?.remove()
+            InAppNotificationService.shared.activeConversationID = nil
         }
+    }
+    
+    private var typingText: String {
+        if typingUserNames.count == 1 {
+            return "\(typingUserNames[0]) is typing..."
+        } else if typingUserNames.count == 2 {
+            return "\(typingUserNames[0]) and \(typingUserNames[1]) are typing..."
+        } else if typingUserNames.count > 2 {
+            return "\(typingUserNames[0]) and \(typingUserNames.count - 1) others are typing..."
+        }
+        return ""
+    }
+    
+    private func handleTypingChange(_ isTyping: Bool) {
+        guard let currentUser = authViewModel.currentUser else { return }
+        TypingIndicatorService.shared.setTyping(
+            conversationID: conversation.id,
+            userID: currentUser.id,
+            isTyping: isTyping
+        )
     }
     
     private func startListening() {
@@ -114,7 +172,7 @@ struct ChatView: View {
             .addSnapshotListener { snapshot, error in
                 guard let snapshot = snapshot else {
                     print("Error listening to messages: \(error?.localizedDescription ?? "Unknown")")
-                    isLoading = false
+                    self.isLoading = false
                     return
                 }
                 
@@ -142,6 +200,44 @@ struct ChatView: View {
                     await self.updateMessageStatuses()
                 }
             }
+        
+        // Listen for typing indicators
+        listenForTypingIndicators()
+    }
+    
+    private func listenForTypingIndicators() {
+        let db = Firestore.firestore()
+        
+        db.collection("conversations")
+            .document(conversation.id)
+            .addSnapshotListener { snapshot, error in
+                guard let data = snapshot?.data(),
+                      let currentUserID = self.authViewModel.currentUser?.id else {
+                    return
+                }
+                
+                let typingUsers = data["typingUsers"] as? [String] ?? []
+                let otherTypingUsers = typingUsers.filter { $0 != currentUserID }
+                
+                self.isOtherUserTyping = !otherTypingUsers.isEmpty
+                
+                // Fetch names of typing users
+                if !otherTypingUsers.isEmpty {
+                    Task {
+                        var names: [String] = []
+                        for userID in otherTypingUsers {
+                            if let user = try? await AuthService.shared.fetchUserDocument(userId: userID) {
+                                names.append(user.displayName)
+                            }
+                        }
+                        await MainActor.run {
+                            self.typingUserNames = names
+                        }
+                    }
+                } else {
+                    self.typingUserNames = []
+                }
+            }
     }
     
     private func sendMessage() {
@@ -152,6 +248,12 @@ struct ChatView: View {
         
         let content = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         messageText = ""
+        
+        // Clear typing indicator
+        TypingIndicatorService.shared.clearAllTyping(
+            conversationID: conversation.id,
+            userID: currentUser.id
+        )
         
         let message = Message(
             id: UUID().uuidString,
