@@ -14,6 +14,13 @@ struct GroupInfoView: View {
                         Text(conversation.name ?? "Group Chat")
                             .foregroundColor(.secondary)
                     }
+                    
+                    HStack {
+                        Text("Participants")
+                        Spacer()
+                        Text("\(conversation.participantIDs.count)")
+                            .foregroundColor(.secondary)
+                    }
                 }
                 
                 Section("Participants (\(conversation.participantIDs.count))") {
@@ -48,10 +55,12 @@ struct GroupInfoView: View {
 }
 
 #Preview {
-    GroupInfoView(conversation: Conversation(
-        id: "preview",
-        isGroup: true,
-        name: "Team Chat",
-        participantIDs: ["user1", "user2", "user3"]
-    ))
+    GroupInfoView(
+        conversation: Conversation(
+            id: "preview",
+            isGroup: true,
+            participantIDs: ["user1", "user2", "user3"],
+            name: "Team Chat"
+        )
+    )
 }

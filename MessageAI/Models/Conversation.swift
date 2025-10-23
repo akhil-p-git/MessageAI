@@ -2,44 +2,37 @@
 //  Conversation.swift
 //  MessageAI
 //
-//  SwiftData Conversation model compatible with Firestore
-//
 
 import Foundation
 import SwiftData
 
 @Model
-class Conversation {
+class Conversation: Identifiable {
     @Attribute(.unique) var id: String
     var isGroup: Bool
     var name: String?
     var participantIDs: [String]
     var lastMessage: String?
-    var lastMessageTime: Date
-    var unreadCount: Int
-    var lastReadTime: Date?
-    var typingUsers: [String] = []
+    var lastMessageTime: Date?
+    var lastSenderID: String?
+    var creatorID: String?
     
-    init(id: String, isGroup: Bool, name: String? = nil, participantIDs: [String], lastMessage: String? = nil, lastMessageTime: Date = Date(), unreadCount: Int = 0, lastReadTime: Date? = nil) {
+    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, creatorID: String? = nil) {
         self.id = id
         self.isGroup = isGroup
-        self.name = name
         self.participantIDs = participantIDs
+        self.name = name
         self.lastMessage = lastMessage
         self.lastMessageTime = lastMessageTime
-        self.unreadCount = unreadCount
-        self.lastReadTime = lastReadTime
-        self.typingUsers = []
+        self.lastSenderID = lastSenderID
+        self.creatorID = creatorID
     }
     
     func toDictionary() -> [String: Any] {
         var dict: [String: Any] = [
             "id": id,
             "isGroup": isGroup,
-            "participantIDs": participantIDs,
-            "lastMessageTime": lastMessageTime,
-            "unreadCount": unreadCount,
-            "typingUsers": typingUsers
+            "participantIDs": participantIDs
         ]
         
         if let name = name {
@@ -50,8 +43,16 @@ class Conversation {
             dict["lastMessage"] = lastMessage
         }
         
-        if let lastReadTime = lastReadTime {
-            dict["lastReadTime"] = lastReadTime
+        if let lastMessageTime = lastMessageTime {
+            dict["lastMessageTime"] = lastMessageTime
+        }
+        
+        if let lastSenderID = lastSenderID {
+            dict["lastSenderID"] = lastSenderID
+        }
+        
+        if let creatorID = creatorID {
+            dict["creatorID"] = creatorID
         }
         
         return dict
@@ -66,24 +67,19 @@ class Conversation {
         
         let name = data["name"] as? String
         let lastMessage = data["lastMessage"] as? String
-        let lastMessageTime = (data["lastMessageTime"] as? Date) ?? Date()
-        let unreadCount = data["unreadCount"] as? Int ?? 0
-        let lastReadTime = data["lastReadTime"] as? Date
-        let typingUsers = data["typingUsers"] as? [String] ?? []
+        let lastMessageTime = data["lastMessageTime"] as? Date
+        let lastSenderID = data["lastSenderID"] as? String
+        let creatorID = data["creatorID"] as? String
         
-        let conversation = Conversation(
+        return Conversation(
             id: id,
             isGroup: isGroup,
-            name: name,
             participantIDs: participantIDs,
+            name: name,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
-            unreadCount: unreadCount,
-            lastReadTime: lastReadTime
+            lastSenderID: lastSenderID,
+            creatorID: creatorID
         )
-        
-        conversation.typingUsers = typingUsers
-        
-        return conversation
     }
 }

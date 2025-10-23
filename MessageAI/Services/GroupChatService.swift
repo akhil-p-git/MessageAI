@@ -19,17 +19,18 @@ class GroupChatService {
         let conversation = Conversation(
             id: conversationID,
             isGroup: true,
-            name: name,
             participantIDs: participantIDs,
+            name: name,
             lastMessage: "\(creatorUser.displayName) created the group",
-            lastMessageTime: Date()
+            lastMessageTime: Date(),
+            creatorID: creatorID
         )
         
         var firestoreData = conversation.toDictionary()
         firestoreData["lastMessageTime"] = Timestamp(date: Date())
         firestoreData["lastSenderID"] = creatorID
-        firestoreData["createdBy"] = creatorID
-        firestoreData["createdByName"] = creatorUser.displayName
+        firestoreData["creatorID"] = creatorID
+        firestoreData["typingUsers"] = [String]()
         
         try await db.collection("conversations").document(conversationID).setData(firestoreData)
         modelContext.insert(conversation)
@@ -39,7 +40,7 @@ class GroupChatService {
         let systemMessage = Message(
             id: UUID().uuidString,
             conversationID: conversationID,
-            senderID: "system",
+            senderID: creatorID,
             content: "\(creatorUser.displayName) created \"\(name)\"",
             timestamp: Date(),
             status: .sent,

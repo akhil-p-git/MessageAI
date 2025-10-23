@@ -2,147 +2,36 @@ import SwiftUI
 
 struct MainTabView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
-    @StateObject private var notificationService = InAppNotificationService.shared
-    @State private var selectedConversationID: String?
+    @State private var selectedTab = 0
     
     var body: some View {
-        ZStack {
-            TabView {
-                ConversationListView(selectedConversationID: $selectedConversationID)
-                    .tabItem {
-                        Label("Chats", systemImage: "bubble.left.and.bubble.right.fill")
-                    }
-                
-                ProfileView()
-                    .tabItem {
-                        Label("Profile", systemImage: "person.fill")
-                    }
-            }
+        TabView(selection: $selectedTab) {
+            ConversationListView()
+                .tabItem {
+                    Label("Chats", systemImage: "message")
+                }
+                .tag(0)
             
-            // Notification overlay
-            NotificationOverlay(selectedConversationID: $selectedConversationID)
-                .allowsHitTesting(true)
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gearshape")
+                }
+                .tag(1)
         }
         .onAppear {
-            if let userID = authViewModel.currentUser?.id {
-                notificationService.startListening(userID: userID)
+            if let currentUser = authViewModel.currentUser {
+                PresenceService.shared.startPresenceUpdates(userID: currentUser.id)
+                InAppNotificationService.shared.startListening(userID: currentUser.id)
             }
         }
         .onDisappear {
-            notificationService.stopListening()
-        }
-    }
-}
-
-struct ProfileView: View {
-    @EnvironmentObject var authViewModel: AuthViewModel
-    
-    var body: some View {
-        NavigationStack {
-            List {
-                // User Info Section
-                Section {
-                    HStack(spacing: 16) {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color.blue, Color.blue.opacity(0.7)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                            .frame(width: 70, height: 70)
-                            .overlay(
-                                Text(authViewModel.currentUser?.displayName.prefix(1).uppercased() ?? "?")
-                                    .font(.system(size: 32, weight: .bold))
-                                    .foregroundColor(.white)
-                            )
-                        
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(authViewModel.currentUser?.displayName ?? "Unknown")
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                            
-                            Text(authViewModel.currentUser?.email ?? "")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                }
-                
-                // Settings Section
-                Section("Settings") {
-                    NavigationLink(destination: EditProfileView()) {
-                        Label("Edit Profile", systemImage: "person.circle")
-                    }
-                    
-                    NavigationLink(destination: NotificationsSettingsView()) {
-                        Label("Notifications", systemImage: "bell")
-                    }
-                    
-                    NavigationLink(destination: PrivacySettingsView()) {
-                        Label("Privacy", systemImage: "lock.shield")
-                    }
-                }
-                
-                // About Section
-                Section("About") {
-                    NavigationLink(destination: HelpSupportView()) {
-                        Label("Help & Support", systemImage: "questionmark.circle")
-                    }
-                    
-                    NavigationLink(destination: TermsOfServiceView()) {
-                        Label("Terms of Service", systemImage: "doc.text")
-                    }
-                }
-                
-                // Sign Out Section
-                Section {
-                    Button(action: {
-                        authViewModel.signOut()
-                    }) {
-                        HStack {
-                            Spacer()
-                            Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                                .foregroundColor(.red)
-                            Spacer()
-                        }
-                    }
+            if let currentUser = authViewModel.currentUser {
+                Task {
+                    await PresenceService.shared.setUserOnline(userID: currentUser.id, isOnline: false)
                 }
             }
-            .navigationTitle("Profile")
+            InAppNotificationService.shared.stopListening()
         }
-    }
-}
-
-// MARK: - Placeholder Views for Settings
-
-struct NotificationsSettingsView: View {
-    var body: some View {
-        Text("Notifications Settings")
-            .navigationTitle("Notifications")
-    }
-}
-
-struct PrivacySettingsView: View {
-    var body: some View {
-        Text("Privacy Settings")
-            .navigationTitle("Privacy")
-    }
-}
-
-struct HelpSupportView: View {
-    var body: some View {
-        Text("Help & Support")
-            .navigationTitle("Help & Support")
-    }
-}
-
-struct TermsOfServiceView: View {
-    var body: some View {
-        Text("Terms of Service")
-            .navigationTitle("Terms of Service")
     }
 }
 

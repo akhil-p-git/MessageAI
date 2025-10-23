@@ -2,8 +2,6 @@
 //  Message.swift
 //  MessageAI
 //
-//  SwiftData Message model compatible with Firestore
-//
 
 import Foundation
 import SwiftData
@@ -32,7 +30,12 @@ class Message: Identifiable {
     var type: MessageType
     var mediaURL: String?
     var readBy: [String]
-    var reactions: [String: [String]]  // [emoji: [userIDs]]
+    var reactions: [String: [String]]
+    var replyToMessageID: String?
+    var replyToContent: String?
+    var replyToSenderID: String?
+    var deletedFor: [String]
+    var deletedForEveryone: Bool
     
     var status: MessageStatus {
         get {
@@ -43,7 +46,7 @@ class Message: Identifiable {
         }
     }
     
-    init(id: String, conversationID: String, senderID: String, content: String, timestamp: Date = Date(), status: MessageStatus = .sent, type: MessageType = .text, mediaURL: String? = nil, readBy: [String] = [], reactions: [String: [String]] = [:]) {
+    init(id: String, conversationID: String, senderID: String, content: String, timestamp: Date = Date(), status: MessageStatus = .sent, type: MessageType = .text, mediaURL: String? = nil, readBy: [String] = [], reactions: [String: [String]] = [:], replyToMessageID: String? = nil, replyToContent: String? = nil, replyToSenderID: String? = nil, deletedFor: [String] = [], deletedForEveryone: Bool = false) {
         self.id = id
         self.conversationID = conversationID
         self.senderID = senderID
@@ -54,6 +57,11 @@ class Message: Identifiable {
         self.mediaURL = mediaURL
         self.readBy = readBy
         self.reactions = reactions
+        self.replyToMessageID = replyToMessageID
+        self.replyToContent = replyToContent
+        self.replyToSenderID = replyToSenderID
+        self.deletedFor = deletedFor
+        self.deletedForEveryone = deletedForEveryone
     }
     
     func toDictionary() -> [String: Any] {
@@ -65,11 +73,25 @@ class Message: Identifiable {
             "timestamp": timestamp,
             "type": type.rawValue,
             "readBy": readBy,
-            "reactions": reactions
+            "reactions": reactions,
+            "deletedFor": deletedFor,
+            "deletedForEveryone": deletedForEveryone
         ]
         
         if let mediaURL = mediaURL {
             dict["mediaURL"] = mediaURL
+        }
+        
+        if let replyToMessageID = replyToMessageID {
+            dict["replyToMessageID"] = replyToMessageID
+        }
+        
+        if let replyToContent = replyToContent {
+            dict["replyToContent"] = replyToContent
+        }
+        
+        if let replyToSenderID = replyToSenderID {
+            dict["replyToSenderID"] = replyToSenderID
         }
         
         return dict
@@ -93,6 +115,11 @@ class Message: Identifiable {
         let mediaURL = data["mediaURL"] as? String
         let readBy = data["readBy"] as? [String] ?? []
         let reactions = data["reactions"] as? [String: [String]] ?? [:]
+        let replyToMessageID = data["replyToMessageID"] as? String
+        let replyToContent = data["replyToContent"] as? String
+        let replyToSenderID = data["replyToSenderID"] as? String
+        let deletedFor = data["deletedFor"] as? [String] ?? []
+        let deletedForEveryone = data["deletedForEveryone"] as? Bool ?? false
         
         return Message(
             id: id,
@@ -104,7 +131,12 @@ class Message: Identifiable {
             type: type,
             mediaURL: mediaURL,
             readBy: readBy,
-            reactions: reactions
+            reactions: reactions,
+            replyToMessageID: replyToMessageID,
+            replyToContent: replyToContent,
+            replyToSenderID: replyToSenderID,
+            deletedFor: deletedFor,
+            deletedForEveryone: deletedForEveryone
         )
     }
 }

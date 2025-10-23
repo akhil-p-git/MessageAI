@@ -1,138 +1,93 @@
 import SwiftUI
+import SwiftData
 import FirebaseFirestore
 
 struct NewGroupChatView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var authViewModel: AuthViewModel
     
     @State private var groupName = ""
-    @State private var searchText = ""
-    @State private var availableUsers: [User] = []
     @State private var selectedUsers: Set<String> = []
+    @State private var availableUsers: [User] = []
     @State private var isLoading = false
     @State private var isCreating = false
-    @State private var createdConversation: Conversation?
-    @State private var navigateToChat = false
-    
-    var filteredUsers: [User] {
-        if searchText.isEmpty {
-            return availableUsers
-        }
-        return availableUsers.filter { user in
-            user.displayName.localizedCaseInsensitiveContains(searchText) ||
-            user.email.localizedCaseInsensitiveContains(searchText)
-        }
-    }
     
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Group Name
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Group Name")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal)
-                    
-                    TextField("Enter group name", text: $groupName)
-                        .textFieldStyle(.roundedBorder)
-                        .padding(.horizontal)
-                }
-                .padding(.vertical)
-                
-                Divider()
-                
-                // Search Bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    
-                    TextField("Search users", text: $searchText)
-                        .autocapitalization(.none)
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding()
-                
-                // Selected Users Count
-                if !selectedUsers.isEmpty {
-                    HStack {
-                        Text("\(selectedUsers.count) \(selectedUsers.count == 1 ? "member" : "members") selected")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                    }
-                    .padding(.horizontal)
-                }
-                
-                // User List
+            VStack {
                 if isLoading {
                     ProgressView()
-                        .padding()
                 } else {
-                    List(filteredUsers) { user in
-                        Button(action: {
-                            toggleUserSelection(user.id)
-                        }) {
-                            HStack(spacing: 12) {
-                                ProfileImageView(
-                                    url: user.profilePictureURL,
-                                    size: 44,
-                                    fallbackText: user.displayName
-                                )
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(user.displayName)
-                                        .font(.body)
-                                        .foregroundColor(.primary)
-                                    
-                                    Text(user.email)
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                
-                                Spacer()
-                                
-                                if selectedUsers.contains(user.id) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundColor(.blue)
-                                        .font(.title3)
-                                }
-                            }
-                            .contentShape(Rectangle())
+                    List {
+                        Section {
+                            TextField("Group Name", text: $groupName)
                         }
-                        .buttonStyle(PlainButtonStyle())
+                        
+                        Section("Add Participants") {
+                            ForEach(availableUsers) { user in
+                                Button(action: {
+                                    toggleUserSelection(user.id)
+                                }) {
+                                    HStack(spacing: 12) {
+                                        ProfileImageView(
+                                            url: user.profilePictureURL,
+                                            size: 44,
+                                            fallbackText: user.displayName
+                                        )
+                                        
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(user.displayName)
+                                                .foregroundColor(.primary)
+                                            
+                                            Text(user.email)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        
+                                        Spacer()
+                                        
+                                        if selectedUsers.contains(user.id) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.blue)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        
+                        if !selectedUsers.isEmpty {
+                            Section {
+                                Text("\(selectedUsers.count) participants selected")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+                        }
                     }
-                    .listStyle(.plain)
+                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("New Group")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
+                ToolbarItem(placement: .navigationBarLeading) {
                     Button("Cancel") {
                         dismiss()
                     }
                 }
                 
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Create") {
                         Task {
                             await createGroup()
                         }
                     }
-                    .disabled(groupName.isEmpty || selectedUsers.count < 1 || isCreating)
+                    .disabled(groupName.isEmpty || selectedUsers.count < 2 || isCreating)
                 }
             }
             .task {
                 await loadUsers()
-            }
-            .navigationDestination(isPresented: $navigateToChat) {
-                if let conversation = createdConversation {
-                    ChatView(conversation: conversation)
-                }
             }
         }
     }
@@ -157,7 +112,7 @@ struct NewGroupChatView: View {
                 self.isLoading = false
             }
         } catch {
-            print("Error loading users: \(error)")
+            print("❌ Error loading users: \(error)")
             await MainActor.run {
                 self.isLoading = false
             }
@@ -167,7 +122,7 @@ struct NewGroupChatView: View {
     private func createGroup() async {
         guard let currentUser = authViewModel.currentUser,
               !groupName.isEmpty,
-              !selectedUsers.isEmpty else {
+              selectedUsers.count >= 2 else {
             return
         }
         
@@ -181,11 +136,11 @@ struct NewGroupChatView: View {
             let conversation = Conversation(
                 id: conversationID,
                 isGroup: true,
-                name: groupName,
                 participantIDs: participantIDs,
+                name: groupName,
                 lastMessage: "\(currentUser.displayName) created the group",
                 lastMessageTime: Date(),
-                unreadCount: 0
+                creatorID: currentUser.id
             )
             
             let db = Firestore.firestore()
@@ -198,7 +153,7 @@ struct NewGroupChatView: View {
                 .document(conversationID)
                 .setData(conversationData)
             
-            // Send system message (only other participants will see it as notification)
+            // Send system message
             let systemMessage = Message(
                 id: UUID().uuidString,
                 conversationID: conversationID,
@@ -221,17 +176,13 @@ struct NewGroupChatView: View {
                 .setData(messageData)
             
             await MainActor.run {
-                self.createdConversation = conversation
-                self.isCreating = false
-                self.navigateToChat = true
+                isCreating = false
                 dismiss()
             }
-            
-            print("✅ Group created successfully")
         } catch {
             print("❌ Error creating group: \(error)")
             await MainActor.run {
-                self.isCreating = false
+                isCreating = false
             }
         }
     }

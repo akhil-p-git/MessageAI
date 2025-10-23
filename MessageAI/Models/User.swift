@@ -1,24 +1,29 @@
+//
+//  User.swift
+//  MessageAI
+//
+
 import Foundation
 import SwiftData
 
 @Model
-class User {
+class User: Identifiable, Codable {
     @Attribute(.unique) var id: String
     var email: String
     var displayName: String
     var profilePictureURL: String?
     var isOnline: Bool
-    var lastSeen: Date
-    var fcmToken: String?
+    var lastSeen: Date?
+    var blockedUsers: [String]
     
-    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, isOnline: Bool = false, lastSeen: Date = Date(), fcmToken: String? = nil) {
+    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, isOnline: Bool = false, lastSeen: Date? = nil, blockedUsers: [String] = []) {
         self.id = id
         self.email = email
         self.displayName = displayName
         self.profilePictureURL = profilePictureURL
         self.isOnline = isOnline
         self.lastSeen = lastSeen
-        self.fcmToken = fcmToken
+        self.blockedUsers = blockedUsers
     }
     
     func toDictionary() -> [String: Any] {
@@ -27,15 +32,15 @@ class User {
             "email": email,
             "displayName": displayName,
             "isOnline": isOnline,
-            "lastSeen": lastSeen
+            "blockedUsers": blockedUsers
         ]
         
         if let profilePictureURL = profilePictureURL {
             dict["profilePictureURL"] = profilePictureURL
         }
         
-        if let fcmToken = fcmToken {
-            dict["fcmToken"] = fcmToken
+        if let lastSeen = lastSeen {
+            dict["lastSeen"] = lastSeen
         }
         
         return dict
@@ -48,10 +53,10 @@ class User {
             return nil
         }
         
-        let isOnline = data["isOnline"] as? Bool ?? false
-        let lastSeen = (data["lastSeen"] as? Date) ?? Date()
         let profilePictureURL = data["profilePictureURL"] as? String
-        let fcmToken = data["fcmToken"] as? String
+        let isOnline = data["isOnline"] as? Bool ?? false
+        let lastSeen = data["lastSeen"] as? Date
+        let blockedUsers = data["blockedUsers"] as? [String] ?? []
         
         return User(
             id: id,
@@ -60,8 +65,33 @@ class User {
             profilePictureURL: profilePictureURL,
             isOnline: isOnline,
             lastSeen: lastSeen,
-            fcmToken: fcmToken
+            blockedUsers: blockedUsers
         )
     }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, email, displayName, profilePictureURL, isOnline, lastSeen, blockedUsers
+    }
+    
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        email = try container.decode(String.self, forKey: .email)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        profilePictureURL = try container.decodeIfPresent(String.self, forKey: .profilePictureURL)
+        isOnline = try container.decodeIfPresent(Bool.self, forKey: .isOnline) ?? false
+        lastSeen = try container.decodeIfPresent(Date.self, forKey: .lastSeen)
+        blockedUsers = try container.decodeIfPresent([String].self, forKey: .blockedUsers) ?? []
+    }
+    
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(email, forKey: .email)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encodeIfPresent(profilePictureURL, forKey: .profilePictureURL)
+        try container.encode(isOnline, forKey: .isOnline)
+        try container.encodeIfPresent(lastSeen, forKey: .lastSeen)
+        try container.encode(blockedUsers, forKey: .blockedUsers)
+    }
 }
-

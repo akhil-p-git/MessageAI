@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import FirebaseFirestore
+import FirebaseStorage
 
 struct ChatView: View {
     let conversation: Conversation
@@ -19,65 +20,23 @@ struct ChatView: View {
     @State private var isUploadingImage = false
     @State private var imageCaption = ""
     @State private var showImagePreview = false
+    @State private var showVoiceRecording = false
+    @State private var replyingToMessage: Message?
+    @State private var replyToSenderName: String?
+    @State private var showSearchMessages = false
+    @State private var otherUser: User?
+    @State private var showBlockReport = false
     
     var body: some View {
         VStack(spacing: 0) {
+            // Other user info bar (for 1-on-1 chats)
+            if shouldShowUserInfoBar {
+                userInfoBar
+            }
+            
             ScrollViewReader { proxy in
                 ScrollView {
-                    if isLoading {
-                        ProgressView()
-                            .padding()
-                    } else if messages.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .font(.system(size: 50))
-                                .foregroundColor(.gray)
-                            Text("No messages yet")
-                                .foregroundColor(.secondary)
-                            Text("Send a message to start the conversation")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding()
-                    } else {
-                        LazyVStack(spacing: 12) {
-                            ForEach(messages) { message in
-                                if message.type == .image {
-                                    ImageMessageBubble(
-                                        message: message,
-                                        isCurrentUser: message.senderID == authViewModel.currentUser?.id
-                                    )
-                                    .id(message.id)
-                                } else {
-                                    MessageBubble(
-                                        message: message,
-                                        isCurrentUser: message.senderID == authViewModel.currentUser?.id,
-                                        isGroupChat: conversation.isGroup
-                                    )
-                                    .id(message.id)
-                                }
-                            }
-                            
-                            if isOtherUserTyping {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        if !typingUserNames.isEmpty {
-                                            Text(typingText)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        TypingIndicatorView()
-                                    }
-                                    
-                                    Spacer()
-                                }
-                                .id("typing-indicator")
-                            }
-                        }
-                        .padding()
-                    }
+                    scrollContent
                 }
                 .onChange(of: messages.count) { _, _ in
                     if let lastMessage = messages.last {
@@ -105,42 +64,26 @@ struct ChatView: View {
                 .padding(.vertical, 8)
             }
             
-            HStack(spacing: 12) {
-                Button(action: { showImagePicker = true }) {
-                    Image(systemName: "camera.fill")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
-                .disabled(isUploadingImage)
-                
-                TextField("Message...", text: $messageText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
-                    .onChange(of: messageText) { oldValue, newValue in
-                        let isTyping = !newValue.isEmpty
-                        handleTypingChange(isTyping)
+            // Reply Preview
+            if let replyMessage = replyingToMessage, let senderName = replyToSenderName {
+                ReplyMessagePreview(
+                    replyToContent: replyMessage.content,
+                    replyToSenderName: senderName,
+                    onCancel: {
+                        replyingToMessage = nil
+                        replyToSenderName = nil
                     }
-                    .disabled(isUploadingImage)
-                
-                Button(action: sendMessage) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundColor(messageText.isEmpty ? .gray : .blue)
-                }
-                .disabled(messageText.isEmpty || isUploadingImage)
+                )
+                .padding(.horizontal)
             }
-            .padding()
-            .background(Color(.systemBackground))
+            
+            inputBar
         }
-        .navigationTitle(conversation.isGroup ? (conversation.name ?? "Group Chat") : "Chat")
+        .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if conversation.isGroup {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink(destination: GroupInfoView(conversation: conversation)) {
-                        Image(systemName: "info.circle")
-                    }
-                }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                toolbarMenu
             }
         }
         .sheet(isPresented: $showImagePicker) {
@@ -162,6 +105,28 @@ struct ChatView: View {
                 }
             )
         }
+        .sheet(isPresented: $showVoiceRecording) {
+            VoiceRecordingView(
+                onSend: { audioURL in
+                    Task {
+                        await sendVoiceMessage(audioURL: audioURL)
+                    }
+                    showVoiceRecording = false
+                },
+                onCancel: {
+                    showVoiceRecording = false
+                }
+            )
+            .presentationDetents([.height(100)])
+        }
+        .sheet(isPresented: $showSearchMessages) {
+            SearchMessagesView(conversation: conversation)
+        }
+        .sheet(isPresented: $showBlockReport) {
+            if let user = otherUser {
+                BlockReportView(user: user)
+            }
+        }
         .onChange(of: selectedImage) { _, newImage in
             if newImage != nil {
                 showImagePreview = true
@@ -170,6 +135,12 @@ struct ChatView: View {
         .onAppear {
             InAppNotificationService.shared.activeConversationID = conversation.id
             startListening()
+            
+            if !conversation.isGroup {
+                Task {
+                    await loadOtherUser()
+                }
+            }
             
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)
@@ -188,6 +159,217 @@ struct ChatView: View {
         }
     }
     
+    // MARK: - Computed Properties
+    
+    private var shouldShowUserInfoBar: Bool {
+        !conversation.isGroup && otherUser != nil
+    }
+    
+    private var navigationTitle: String {
+        if conversation.isGroup {
+            return conversation.name ?? "Group Chat"
+        } else {
+            return otherUser?.displayName ?? "Chat"
+        }
+    }
+    
+    // MARK: - View Components
+    
+    private var userInfoBar: some View {
+        HStack(spacing: 8) {
+            if let user = otherUser {
+                OnlineStatusIndicator(isOnline: user.isOnline, size: 8)
+                LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+        .background(Color(.systemGray6))
+    }
+    
+    @ViewBuilder
+    private var scrollContent: some View {
+        if isLoading {
+            ProgressView()
+                .padding()
+        } else if messages.isEmpty {
+            emptyStateView
+        } else {
+            messagesView
+        }
+    }
+    
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 50))
+                .foregroundColor(.gray)
+            Text("No messages yet")
+                .foregroundColor(.secondary)
+            Text("Send a message to start the conversation")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
+    }
+    
+    private var messagesView: some View {
+        LazyVStack(spacing: 12) {
+            ForEach(filteredMessages) { message in
+                messageView(for: message)
+            }
+            
+            if isOtherUserTyping {
+                typingIndicatorView
+            }
+        }
+        .padding()
+    }
+    
+    private var filteredMessages: [Message] {
+        messages.filter { !$0.deletedFor.contains(authViewModel.currentUser?.id ?? "") }
+    }
+    
+    @ViewBuilder
+    private func messageView(for message: Message) -> some View {
+        Group {
+            if message.type == .voice {
+                VoiceMessageBubble(
+                    message: message,
+                    isCurrentUser: message.senderID == authViewModel.currentUser?.id
+                )
+                .contextMenu {
+                    messageContextMenu(for: message)
+                }
+            } else if message.type == .image {
+                ImageMessageBubble(
+                    message: message,
+                    isCurrentUser: message.senderID == authViewModel.currentUser?.id
+                )
+                .contextMenu {
+                    messageContextMenu(for: message)
+                }
+            } else {
+                MessageBubble(
+                    message: message,
+                    isCurrentUser: message.senderID == authViewModel.currentUser?.id,
+                    isGroupChat: conversation.isGroup,
+                    onReply: {
+                        Task {
+                            await handleReply(to: message)
+                        }
+                    }
+                )
+            }
+        }
+        .id(message.id)
+    }
+    
+    private var typingIndicatorView: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                if !typingUserNames.isEmpty {
+                    Text(typingText)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                TypingIndicatorView()
+            }
+            
+            Spacer()
+        }
+        .id("typing-indicator")
+    }
+    
+    private var inputBar: some View {
+        HStack(spacing: 12) {
+            HStack(spacing: 8) {
+                Button(action: { showImagePicker = true }) {
+                    Image(systemName: "camera.fill")
+                        .foregroundColor(.blue)
+                }
+                
+                Button(action: { showVoiceRecording = true }) {
+                    Image(systemName: "mic.fill")
+                        .foregroundColor(.blue)
+                }
+            }
+            .disabled(isUploadingImage)
+            
+            TextField("Message...", text: $messageText, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(1...5)
+                .onChange(of: messageText) { oldValue, newValue in
+                    let isTyping = !newValue.isEmpty
+                    handleTypingChange(isTyping)
+                }
+                .disabled(isUploadingImage)
+            
+            Button(action: sendMessage) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(messageText.isEmpty ? .gray : .blue)
+            }
+            .disabled(messageText.isEmpty || isUploadingImage)
+        }
+        .padding()
+        .background(Color(.systemBackground))
+    }
+    
+    private var toolbarMenu: some View {
+        Menu {
+            Button(action: { showSearchMessages = true }) {
+                Label("Search", systemImage: "magnifyingglass")
+            }
+            
+            if conversation.isGroup {
+                NavigationLink(destination: GroupInfoView(conversation: conversation)) {
+                    Label("Group Info", systemImage: "info.circle")
+                }
+            } else if otherUser != nil {
+                Button(action: { showBlockReport = true }) {
+                    Label("Block/Report", systemImage: "hand.raised")
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+    }
+    
+    @ViewBuilder
+    private func messageContextMenu(for message: Message) -> some View {
+        if message.senderID == authViewModel.currentUser?.id {
+            Button(role: .destructive, action: {
+                Task {
+                    await deleteMessage(message, forEveryone: false)
+                }
+            }) {
+                Label("Delete for Me", systemImage: "trash")
+            }
+            
+            Button(role: .destructive, action: {
+                Task {
+                    await deleteMessage(message, forEveryone: true)
+                }
+            }) {
+                Label("Delete for Everyone", systemImage: "trash.fill")
+            }
+        } else {
+            Button(role: .destructive, action: {
+                Task {
+                    await deleteMessage(message, forEveryone: false)
+                }
+            }) {
+                Label("Delete for Me", systemImage: "trash")
+            }
+        }
+    }
+    
+    // MARK: - Helper Properties
+    
     private var typingText: String {
         if typingUserNames.count == 1 {
             return "\(typingUserNames[0]) is typing..."
@@ -199,6 +381,8 @@ struct ChatView: View {
         return ""
     }
     
+    // MARK: - Functions
+    
     private func handleTypingChange(_ isTyping: Bool) {
         guard let currentUser = authViewModel.currentUser else { return }
         TypingIndicatorService.shared.setTyping(
@@ -208,10 +392,51 @@ struct ChatView: View {
         )
     }
     
+    private func loadOtherUser() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        if let otherUserID = conversation.participantIDs.first(where: { $0 != currentUser.id }) {
+            if let user = try? await AuthService.shared.fetchUserDocument(userId: otherUserID) {
+                await MainActor.run {
+                    self.otherUser = user
+                }
+            }
+        }
+    }
+    
+    private func handleReply(to message: Message) async {
+        if let sender = try? await AuthService.shared.fetchUserDocument(userId: message.senderID) {
+            await MainActor.run {
+                self.replyingToMessage = message
+                self.replyToSenderName = sender.displayName
+            }
+        }
+    }
+    
+    private func deleteMessage(_ message: Message, forEveryone: Bool) async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            if forEveryone {
+                try await DeleteMessageService.shared.deleteMessageForEveryone(
+                    messageID: message.id,
+                    conversationID: conversation.id
+                )
+            } else {
+                try await DeleteMessageService.shared.deleteMessageForMe(
+                    messageID: message.id,
+                    conversationID: conversation.id,
+                    userID: currentUser.id
+                )
+            }
+        } catch {
+            print("❌ Error deleting message: \(error)")
+        }
+    }
+    
     private func startListening() {
         let db = Firestore.firestore()
         
-        // SIMPLE: Just reload all messages on ANY change
         listener = db.collection("conversations")
             .document(conversation.id)
             .collection("messages")
@@ -228,13 +453,11 @@ struct ChatView: View {
                     return
                 }
                 
-                // Rebuild the messages array from scratch
                 var newMessages: [Message] = []
                 
                 for document in documents {
                     var data = document.data()
                     
-                    // Convert Timestamp to Date
                     if let timestamp = data["timestamp"] as? Timestamp {
                         data["timestamp"] = timestamp.dateValue()
                     }
@@ -247,7 +470,6 @@ struct ChatView: View {
                 self.messages = newMessages
                 self.isLoading = false
                 
-                // Mark messages as read whenever messages update
                 Task {
                     await self.markMessagesAsRead()
                 }
@@ -311,8 +533,17 @@ struct ChatView: View {
             content: content,
             timestamp: Date(),
             status: .sent,
-            type: .text
+            type: .text,
+            mediaURL: nil,
+            readBy: [],
+            reactions: [:],
+            replyToMessageID: replyingToMessage?.id,
+            replyToContent: replyingToMessage?.content,
+            replyToSenderID: replyingToMessage?.senderID
         )
+        
+        replyingToMessage = nil
+        replyToSenderName = nil
         
         Task {
             let db = Firestore.firestore()
@@ -400,6 +631,55 @@ struct ChatView: View {
         }
     }
     
+    private func sendVoiceMessage(audioURL: URL) async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            let data = try Data(contentsOf: audioURL)
+            let filename = "\(UUID().uuidString).m4a"
+            let path = "conversations/\(conversation.id)/voice/\(filename)"
+            let storageRef = Storage.storage().reference().child(path)
+            
+            let _ = try await storageRef.putDataAsync(data)
+            let downloadURL = try await storageRef.downloadURL()
+            
+            let message = Message(
+                id: UUID().uuidString,
+                conversationID: conversation.id,
+                senderID: currentUser.id,
+                content: "🎤 Voice message",
+                timestamp: Date(),
+                status: .sent,
+                type: .voice,
+                mediaURL: downloadURL.absoluteString
+            )
+            
+            let db = Firestore.firestore()
+            var messageData = message.toDictionary()
+            messageData["timestamp"] = Timestamp(date: message.timestamp)
+            messageData["status"] = "sent"
+            messageData["type"] = "voice"
+            
+            try await db.collection("conversations")
+                .document(conversation.id)
+                .collection("messages")
+                .document(message.id)
+                .setData(messageData)
+            
+            try await db.collection("conversations")
+                .document(conversation.id)
+                .updateData([
+                    "lastMessage": "🎤 Voice message",
+                    "lastMessageTime": Timestamp(date: Date()),
+                    "lastSenderID": currentUser.id
+                ])
+            
+            print("✅ Voice message sent")
+        } catch {
+            print("❌ Error sending voice message: \(error)")
+        }
+    }
+    
     private func markMessagesAsRead() async {
         guard let currentUser = authViewModel.currentUser else { return }
         
@@ -407,7 +687,6 @@ struct ChatView: View {
         let batch = db.batch()
         var batchCount = 0
         
-        // Find unread messages
         for message in messages {
             guard message.senderID != currentUser.id else { continue }
             guard !message.readBy.contains(currentUser.id) else { continue }
@@ -417,10 +696,8 @@ struct ChatView: View {
                 .collection("messages")
                 .document(message.id)
             
-            // Update readBy
             batch.updateData(["readBy": FieldValue.arrayUnion([currentUser.id])], forDocument: messageRef)
             
-            // For 1-on-1, also update status
             if !conversation.isGroup {
                 batch.updateData(["status": "read"], forDocument: messageRef)
             }
@@ -428,17 +705,14 @@ struct ChatView: View {
             batchCount += 1
         }
         
-        // Commit batch if we have updates
         if batchCount > 0 {
             do {
                 try await batch.commit()
-                print("✅ Marked \(batchCount) messages as read")
             } catch {
                 print("❌ Error marking as read: \(error)")
             }
         }
         
-        // Update group chat statuses
         if conversation.isGroup {
             await updateGroupMessageStatuses()
         }
@@ -473,14 +747,16 @@ struct ChatView: View {
     }
 }
 
-// MARK: - Message Bubble
+// MARK: - MessageBubble
 
 struct MessageBubble: View {
     let message: Message
     let isCurrentUser: Bool
     let isGroupChat: Bool
+    let onReply: () -> Void
     @State private var showReadReceipts = false
     @State private var showReactionPicker = false
+    @State private var showForwardSheet = false
     @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
@@ -488,57 +764,87 @@ struct MessageBubble: View {
             if isCurrentUser { Spacer() }
             
             VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 4) {
-                Text(message.content)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(isCurrentUser ? Color.blue : Color(.systemGray5))
-                    .foregroundColor(isCurrentUser ? .white : .primary)
-                    .cornerRadius(18)
-                    .contextMenu {
-                        Button(action: {
-                            showReactionPicker = true
-                        }) {
-                            Label("Add Reaction", systemImage: "face.smiling")
-                        }
-                        
-                        Button(action: {
-                            UIPasteboard.general.string = message.content
-                        }) {
-                            Label("Copy", systemImage: "doc.on.doc")
-                        }
-                        
-                        if isCurrentUser && isGroupChat && !message.readBy.isEmpty {
-                            Button(action: {
-                                showReadReceipts = true
-                            }) {
-                                Label("Read Receipts", systemImage: "eye")
-                            }
-                        }
-                    }
-                    .onLongPressGesture {
-                        showReactionPicker = true
-                    }
-                
-                MessageReactionsView(message: message, isCurrentUser: isCurrentUser)
-                
-                HStack(spacing: 4) {
-                    Text(formattedTime)
-                        .font(.caption2)
+                if message.deletedForEveryone {
+                    Text("This message was deleted")
+                        .italic()
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color(.systemGray5))
                         .foregroundColor(.secondary)
+                        .cornerRadius(18)
+                } else {
+                    if let replyContent = message.replyToContent,
+                       let replySenderID = message.replyToSenderID {
+                        ReplyBubbleView(
+                            replyToContent: replyContent,
+                            replyToSenderName: replySenderID,
+                            isCurrentUser: isCurrentUser
+                        )
+                        .padding(.horizontal, 4)
+                    }
                     
-                    if isCurrentUser {
-                        HStack(spacing: 2) {
-                            Image(systemName: statusIcon)
-                                .font(.caption2)
-                                .foregroundColor(statusColor)
+                    Text(message.content)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(isCurrentUser ? Color.blue : Color(.systemGray5))
+                        .foregroundColor(isCurrentUser ? .white : .primary)
+                        .cornerRadius(18)
+                        .contextMenu {
+                            Button(action: onReply) {
+                                Label("Reply", systemImage: "arrowshape.turn.up.left")
+                            }
                             
-                            if isGroupChat && !message.readBy.isEmpty {
+                            Button(action: {
+                                showForwardSheet = true
+                            }) {
+                                Label("Forward", systemImage: "arrowshape.turn.up.right")
+                            }
+                            
+                            Button(action: {
+                                showReactionPicker = true
+                            }) {
+                                Label("Add Reaction", systemImage: "face.smiling")
+                            }
+                            
+                            Button(action: {
+                                UIPasteboard.general.string = message.content
+                            }) {
+                                Label("Copy", systemImage: "doc.on.doc")
+                            }
+                            
+                            if isCurrentUser && isGroupChat && !message.readBy.isEmpty {
                                 Button(action: {
                                     showReadReceipts = true
                                 }) {
-                                    Text("\(message.readBy.count)")
-                                        .font(.system(size: 9, weight: .semibold))
-                                        .foregroundColor(statusColor)
+                                    Label("Read Receipts", systemImage: "eye")
+                                }
+                            }
+                        }
+                        .onLongPressGesture {
+                            showReactionPicker = true
+                        }
+                    
+                    MessageReactionsView(message: message, isCurrentUser: isCurrentUser)
+                    
+                    HStack(spacing: 4) {
+                        Text(formattedTime)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        if isCurrentUser {
+                            HStack(spacing: 2) {
+                                Image(systemName: statusIcon)
+                                    .font(.caption2)
+                                    .foregroundColor(statusColor)
+                                
+                                if isGroupChat && !message.readBy.isEmpty {
+                                    Button(action: {
+                                        showReadReceipts = true
+                                    }) {
+                                        Text("\(message.readBy.count)")
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundColor(statusColor)
+                                    }
                                 }
                             }
                         }
@@ -564,6 +870,9 @@ struct MessageBubble: View {
         }
         .sheet(isPresented: $showReadReceipts) {
             ReadReceiptsView(message: message)
+        }
+        .sheet(isPresented: $showForwardSheet) {
+            ForwardMessageView(message: message)
         }
     }
     
