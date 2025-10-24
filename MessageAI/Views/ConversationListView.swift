@@ -223,8 +223,17 @@ struct ConversationListView: View {
                         
                         guard let lastSenderID = data["lastSenderID"] as? String,
                               let conversationID = data["id"] as? String,
-                              let lastMessage = data["lastMessage"] as? String,
                               let lastMessageID = data["lastMessageID"] as? String else {
+                            // No lastSenderID or lastMessageID means no messages yet
+                            continue
+                        }
+                        
+                        // Get lastMessage - might be nil for new conversations
+                        let lastMessage = data["lastMessage"] as? String
+                        
+                        // Skip if there's no actual message content (new chat without messages)
+                        guard let messageContent = lastMessage, !messageContent.isEmpty else {
+                            print("🔕 Skipping notification - no message content (new chat)")
                             continue
                         }
                         
@@ -242,11 +251,11 @@ struct ConversationListView: View {
                             // Get sender name from user cache
                             let senderName = self.userCache[lastSenderID]?.displayName ?? "Someone"
                             
-                            print("🔔 New message detected (ID: \(lastMessageID.prefix(8))...): '\(lastMessage)' from \(senderName)")
+                            print("🔔 New message detected (ID: \(lastMessageID.prefix(8))...): '\(messageContent)' from \(senderName)")
                             
                             NotificationManager.shared.showNotification(
                                 title: senderName,
-                                body: lastMessage,
+                                body: messageContent,
                                 conversationID: conversationID,
                                 senderID: lastSenderID,
                                 currentUserID: currentUser.id

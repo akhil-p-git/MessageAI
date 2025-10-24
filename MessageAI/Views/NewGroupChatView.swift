@@ -136,14 +136,29 @@ struct NewGroupChatView: View {
             // Mark as unread for all participants except the creator
             let otherParticipants = participantIDs.filter { $0 != currentUser.id }
             
+            // Create system message first
+            let systemMessageID = UUID().uuidString
+            let systemMessageContent = "\(currentUser.displayName) added you to \"\(groupName)\""
+            
+            let systemMessage = Message(
+                id: systemMessageID,
+                conversationID: conversationID,
+                senderID: currentUser.id,
+                content: systemMessageContent,
+                timestamp: Date(),
+                status: .sent,
+                type: .text
+            )
+            
             let conversation = Conversation(
                 id: conversationID,
                 isGroup: true,
                 participantIDs: participantIDs,
                 name: groupName,
-                lastMessage: "\(currentUser.displayName) created the group",
+                lastMessage: systemMessageContent,
                 lastMessageTime: Date(),
                 lastSenderID: currentUser.id,
+                lastMessageID: systemMessageID,  // Set the message ID
                 unreadBy: otherParticipants,
                 creatorID: currentUser.id
             )
@@ -159,20 +174,11 @@ struct NewGroupChatView: View {
                 .setData(conversationData)
             
             // Send system message
-            let systemMessage = Message(
-                id: UUID().uuidString,
-                conversationID: conversationID,
-                senderID: currentUser.id,
-                content: "\(currentUser.displayName) created \"\(groupName)\"",
-                timestamp: Date(),
-                status: .sent,
-                type: .text
-            )
-            
             var messageData = systemMessage.toDictionary()
             messageData["timestamp"] = Timestamp(date: systemMessage.timestamp)
             messageData["status"] = "sent"
             messageData["isSystemMessage"] = true
+            messageData["senderName"] = currentUser.displayName
             
             try await db.collection("conversations")
                 .document(conversationID)

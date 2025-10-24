@@ -602,8 +602,10 @@ struct ChatView: View {
                             existingMessage.readBy = updatedMessage.readBy
                             existingMessage.reactions = updatedMessage.reactions
                             existingMessage.mediaURL = updatedMessage.mediaURL
+                            existingMessage.deletedFor = updatedMessage.deletedFor
+                            existingMessage.deletedForEveryone = updatedMessage.deletedForEveryone
                             
-                            print("   ✏️ Modified message: '\(updatedMessage.content)' - readBy: \(updatedMessage.readBy.count) users")
+                            print("   ✏️ Modified message: '\(updatedMessage.content)' - readBy: \(updatedMessage.readBy.count), deleted: \(updatedMessage.deletedForEveryone)")
                             
                             // Save to SwiftData
                             try? self.modelContext.save()
