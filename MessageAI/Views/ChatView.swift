@@ -50,17 +50,26 @@ struct ChatView: View {
                 ScrollView {
                     scrollContent
                 }
-                .onChange(of: messages.count) { _, _ in
-                    if let lastMessage = messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                .onChange(of: messages.count) { oldCount, newCount in
+                    // Only scroll if we have messages and the count changed
+                    guard !messages.isEmpty, oldCount != newCount else { return }
+                    
+                    // Small delay to ensure SwiftUI has rendered the new message
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        if let lastMessage = messages.last {
+                            withAnimation {
+                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
                 .onChange(of: isOtherUserTyping) { _, isTyping in
                     if isTyping {
-                        withAnimation {
-                            proxy.scrollTo("typing-indicator", anchor: .bottom)
+                        // Small delay to ensure typing indicator is rendered
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            withAnimation {
+                                proxy.scrollTo("typing-indicator", anchor: .bottom)
+                            }
                         }
                     }
                 }
@@ -306,8 +315,12 @@ struct ChatView: View {
     
     private var messagesView: some View {
         LazyVStack(spacing: 12) {
-            ForEach(filteredMessages) { message in
-                messageView(for: message)
+            ForEach(messages) { message in
+                // Only show message if not deleted for current user
+                if !message.deletedFor.contains(authViewModel.currentUser?.id ?? "") {
+                    messageView(for: message)
+                        .id("\(message.id)-\(message.deletedFor.count)-\(message.deletedForEveryone)")
+                }
             }
             
             if isOtherUserTyping {
@@ -315,10 +328,6 @@ struct ChatView: View {
             }
         }
         .padding()
-    }
-    
-    private var filteredMessages: [Message] {
-        messages.filter { !$0.deletedFor.contains(authViewModel.currentUser?.id ?? "") }
     }
     
     @ViewBuilder
@@ -506,21 +515,63 @@ struct ChatView: View {
     private func deleteMessage(_ message: Message, forEveryone: Bool) async {
         guard let currentUser = authViewModel.currentUser else { return }
         
+        print("🗑️ Deleting message \(message.id.prefix(8))... (forEveryone: \(forEveryone))")
+        
+        // Update local state FIRST (optimistic update)
+        // This prevents UI flickering and sync issues
+        await MainActor.run {
+            if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                if forEveryone {
+                    // Update to show "deleted" message
+                    messages[index].content = "This message was deleted"
+                    messages[index].deletedForEveryone = true
+                    messages[index].mediaURL = nil
+                } else {
+                    // Add current user to deletedFor array
+                    if !messages[index].deletedFor.contains(currentUser.id) {
+                        messages[index].deletedFor.append(currentUser.id)
+                    }
+                }
+                
+                // Save to SwiftData
+                try? modelContext.save()
+                print("✅ Local state updated (optimistic)")
+            }
+        }
+        
+        // Then update Firestore
         do {
             if forEveryone {
                 try await DeleteMessageService.shared.deleteMessageForEveryone(
                     messageID: message.id,
                     conversationID: conversation.id
                 )
+                print("✅ Firestore updated (deleted for everyone)")
             } else {
                 try await DeleteMessageService.shared.deleteMessageForMe(
                     messageID: message.id,
                     conversationID: conversation.id,
                     userID: currentUser.id
                 )
+                print("✅ Firestore updated (deleted for me)")
             }
         } catch {
-            print("❌ Error deleting message: \(error)")
+            print("❌ Error deleting message in Firestore: \(error)")
+            
+            // Revert local changes if Firestore update failed
+            await MainActor.run {
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    if forEveryone {
+                        messages[index].content = message.content
+                        messages[index].deletedForEveryone = false
+                        messages[index].mediaURL = message.mediaURL
+                    } else {
+                        messages[index].deletedFor.removeAll { $0 == currentUser.id }
+                    }
+                    try? modelContext.save()
+                    print("⏪ Reverted local changes due to Firestore error")
+                }
+            }
         }
     }
     
@@ -595,7 +646,12 @@ struct ChatView: View {
                     case .modified:
                         // Find and update the existing message
                         if let index = self.messages.firstIndex(where: { $0.id == updatedMessage.id }) {
-                            // Update the message properties while keeping the same object reference
+                            print("   ✏️ Modifying message \(updatedMessage.id.prefix(8))...")
+                            print("      Content: '\(updatedMessage.content)'")
+                            print("      Deleted for: \(updatedMessage.deletedFor.count) users")
+                            print("      Deleted for everyone: \(updatedMessage.deletedForEveryone)")
+                            
+                            // Update the message properties
                             let existingMessage = self.messages[index]
                             existingMessage.content = updatedMessage.content
                             existingMessage.statusRaw = updatedMessage.statusRaw
@@ -605,13 +661,10 @@ struct ChatView: View {
                             existingMessage.deletedFor = updatedMessage.deletedFor
                             existingMessage.deletedForEveryone = updatedMessage.deletedForEveryone
                             
-                            print("   ✏️ Modified message: '\(updatedMessage.content)' - readBy: \(updatedMessage.readBy.count), deleted: \(updatedMessage.deletedForEveryone)")
-                            
                             // Save to SwiftData
                             try? self.modelContext.save()
                             
-                            // Force UI update
-                            self.messages[index] = existingMessage
+                            print("   ✅ Message updated in local state")
                         }
                         
                     case .removed:
@@ -813,15 +866,21 @@ struct ChatView: View {
                     print("      Other participants (unreadBy): \(otherParticipants)")
                     
                     // Use setData with merge to create document if it doesn't exist
+                    // Include ALL conversation fields to ensure document is complete
                     do {
                         try await db.collection("conversations")
                             .document(conversation.id)
                             .setData([
+                                "id": conversation.id,
+                                "participantIDs": conversation.participantIDs,
+                                "isGroup": conversation.isGroup,
+                                "name": conversation.name ?? "",
                                 "lastMessage": content,
                                 "lastMessageTime": Timestamp(date: Date()),
                                 "lastSenderID": currentUser.id,
                                 "lastMessageID": message.id,
-                                "unreadBy": otherParticipants
+                                "unreadBy": otherParticipants,
+                                "creatorID": conversation.creatorID ?? currentUser.id
                             ], merge: true)
                         
                         print("   ✅ Conversation metadata updated successfully!")
@@ -902,15 +961,21 @@ struct ChatView: View {
             print("      Conversation ID: \(conversation.id)")
             
             // Use setData with merge to create document if it doesn't exist
+            // Include ALL conversation fields to ensure document is complete
             do {
                 try await db.collection("conversations")
                     .document(conversation.id)
                     .setData([
+                        "id": conversation.id,
+                        "participantIDs": conversation.participantIDs,
+                        "isGroup": conversation.isGroup,
+                        "name": conversation.name ?? "",
                         "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
                         "lastMessageTime": Timestamp(date: Date()),
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
-                        "unreadBy": otherParticipants
+                        "unreadBy": otherParticipants,
+                        "creatorID": conversation.creatorID ?? currentUser.id
                     ], merge: true)
                 
                 print("   ✅ Conversation metadata updated for image!\n")
@@ -1000,15 +1065,21 @@ struct ChatView: View {
             print("      Conversation ID: \(conversation.id)")
             
             // Use setData with merge to create document if it doesn't exist
+            // Include ALL conversation fields to ensure document is complete
             do {
                 try await db.collection("conversations")
                     .document(conversation.id)
                     .setData([
+                        "id": conversation.id,
+                        "participantIDs": conversation.participantIDs,
+                        "isGroup": conversation.isGroup,
+                        "name": conversation.name ?? "",
                         "lastMessage": "🎤 Voice message",
                         "lastMessageTime": Timestamp(date: Date()),
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
-                        "unreadBy": otherParticipants
+                        "unreadBy": otherParticipants,
+                        "creatorID": conversation.creatorID ?? currentUser.id
                     ], merge: true)
                 
                 print("   ✅ Conversation metadata updated!")

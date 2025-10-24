@@ -361,54 +361,6 @@ struct ConversationRow: View {
         }
     }
     
-    private func startListeningForTyping() {
-        guard let currentUser = authViewModel.currentUser else { return }
-        
-        let db = Firestore.firestore()
-        
-        typingListener = db.collection("conversations")
-            .document(conversation.id)
-            .addSnapshotListener { snapshot, error in
-                guard let data = snapshot?.data() else { return }
-                
-                let typingUserIDs = data["typingUsers"] as? [String] ?? []
-                
-                // Filter out current user
-                let otherTypingUsers = typingUserIDs.filter { $0 != currentUser.id }
-                
-                self.typingUsers = otherTypingUsers
-                
-                if !otherTypingUsers.isEmpty {
-                    print("⌨️  ConversationRow: \(otherTypingUsers.count) users typing in \(conversation.id.prefix(8))...")
-                }
-            }
-    }
-    
-    private func startListeningForPresence() {
-        guard let currentUser = authViewModel.currentUser,
-              !conversation.isGroup,
-              let otherUserID = conversation.participantIDs.first(where: { $0 != currentUser.id }) else {
-            return
-        }
-        
-        let db = Firestore.firestore()
-        
-        presenceListener = db.collection("users")
-            .document(otherUserID)
-            .addSnapshotListener { snapshot, error in
-                guard let data = snapshot?.data() else {
-                    return
-                }
-                
-                let isOnline = data["isOnline"] as? Bool ?? false
-                let showOnlineStatus = data["showOnlineStatus"] as? Bool ?? true
-                
-                // Update state variables for real-time UI updates
-                self.otherUserOnline = isOnline
-                self.otherUserShowStatus = showOnlineStatus
-            }
-    }
-    
     private func hasUnreadMessages() -> Bool {
         guard let currentUser = authViewModel.currentUser else {
             return false
