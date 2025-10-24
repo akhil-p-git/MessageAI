@@ -10,6 +10,8 @@ struct ConversationListView: View {
     @State private var messageListener: ListenerRegistration?
     @State private var userCache: [String: User] = [:]
     @State private var lastNotifiedMessageIDs: [String: String] = [:]  // conversationID -> lastMessageID
+    @State private var selectedConversation: Conversation?
+    @State private var navigateToNewChat = false
     
     var body: some View {
         NavigationStack {
@@ -60,10 +62,21 @@ struct ConversationListView: View {
                 }
             }
             .sheet(isPresented: $showNewChat) {
-                NewChatView()
+                NewChatView(selectedConversation: $selectedConversation)
             }
             .sheet(isPresented: $showNewGroup) {
                 NewGroupChatView()
+            }
+            .navigationDestination(isPresented: $navigateToNewChat) {
+                if let conversation = selectedConversation {
+                    ChatView(conversation: conversation)
+                }
+            }
+            .onChange(of: selectedConversation) { oldValue, newValue in
+                if newValue != nil {
+                    showNewChat = false  // Dismiss the sheet
+                    navigateToNewChat = true  // Navigate to the chat
+                }
             }
             .onAppear {
                 startListening()

@@ -7,12 +7,12 @@ struct NewChatView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var authViewModel: AuthViewModel
     
+    @Binding var selectedConversation: Conversation?
+    
     @State private var email = ""
     @State private var isSearching = false
     @State private var errorMessage: String?
     @State private var showError = false
-    @State private var createdConversation: Conversation?
-    @State private var navigateToChat = false
     
     var body: some View {
         NavigationStack {
@@ -56,11 +56,6 @@ struct NewChatView: View {
                 Button("OK") {}
             } message: {
                 Text(errorMessage ?? "Unknown error")
-            }
-            .navigationDestination(isPresented: $navigateToChat) {
-                if let conversation = createdConversation {
-                    ChatView(conversation: conversation)
-                }
             }
         }
     }
@@ -107,12 +102,11 @@ struct NewChatView: View {
             print("✅ NewChatView: Got conversation \(conversation.id)")
             
             await MainActor.run {
-                print("🎯 NewChatView: Setting up navigation...")
-                self.createdConversation = conversation
-                self.navigateToChat = true
-                print("🚪 NewChatView: Dismissing...")
+                print("🎯 NewChatView: Setting selected conversation...")
+                self.selectedConversation = conversation
+                print("🚪 NewChatView: Dismissing sheet...")
                 dismiss()
-                print("✅ NewChatView: Complete!")
+                print("✅ NewChatView: Complete! Parent will handle navigation.")
             }
         } catch {
             print("❌ NewChatView: Error - \(error.localizedDescription)")
@@ -126,6 +120,6 @@ struct NewChatView: View {
 }
 
 #Preview {
-    NewChatView()
+    NewChatView(selectedConversation: .constant(nil))
         .environmentObject(AuthViewModel())
 }
