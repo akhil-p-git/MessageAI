@@ -22,12 +22,13 @@ struct VoiceMessageBubble: View {
                 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 2) {
-                        ForEach(0..<20, id: \.self) { _ in
+                        ForEach(0..<20, id: \.self) { index in
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(isCurrentUser ? Color.white.opacity(0.7) : Color.blue.opacity(0.7))
-                                .frame(width: 3, height: CGFloat.random(in: 8...24))
+                                .frame(width: 3, height: CGFloat(12 + (index % 3) * 4))
                         }
                     }
+                    .frame(height: 24)
                     
                     Text(formatDuration())
                         .font(.caption)
@@ -88,7 +89,19 @@ struct VoiceMessageBubble: View {
     }
     
     private func formatDuration() -> String {
-        let time = player.playingMessageID == message.id ? player.currentTime : player.duration
+        let time: TimeInterval
+        
+        if player.playingMessageID == message.id && player.isPlaying {
+            // Show current playback time
+            time = player.currentTime
+        } else if player.playingMessageID == message.id && player.duration > 0 {
+            // Show total duration if we've loaded this message
+            time = player.duration
+        } else {
+            // Default to showing "Voice message" since we don't have duration stored
+            return "Voice message"
+        }
+        
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%d:%02d", minutes, seconds)
