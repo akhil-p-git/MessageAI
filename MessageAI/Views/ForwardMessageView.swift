@@ -163,12 +163,22 @@ struct ForwardMessageView: View {
                     .document(forwardedMessage.id)
                     .setData(messageData)
                 
+                // Get conversation to find other participants
+                let conversationDoc = try await db.collection("conversations")
+                    .document(conversationID)
+                    .getDocument()
+                
+                let participantIDs = conversationDoc.data()?["participantIDs"] as? [String] ?? []
+                let otherParticipants = participantIDs.filter { $0 != currentUser.id }
+                
                 try await db.collection("conversations")
                     .document(conversationID)
                     .updateData([
                         "lastMessage": message.content,
                         "lastMessageTime": Timestamp(date: Date()),
-                        "lastSenderID": currentUser.id
+                        "lastSenderID": currentUser.id,
+                        "lastMessageID": forwardedMessage.id,
+                        "unreadBy": otherParticipants
                     ])
             } catch {
                 print("❌ Error forwarding message: \(error)")

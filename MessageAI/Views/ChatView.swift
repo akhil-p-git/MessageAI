@@ -29,6 +29,8 @@ struct ChatView: View {
     @State private var showAIPanel = false
     @StateObject private var networkMonitor = NetworkMonitor.shared
     @StateObject private var syncService = MessageSyncService.shared
+    @State private var showReadReceipts = false
+    @State private var selectedMessageForReceipts: Message?
     
     var body: some View {
         VStack(spacing: 0) {
@@ -168,6 +170,11 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showAIPanel) {
             AIFeaturesView(conversationID: conversation.id)
+        }
+        .sheet(isPresented: $showReadReceipts) {
+            if let message = selectedMessageForReceipts {
+                ReadReceiptsView(message: message)
+            }
         }
         .onChange(of: selectedImage) { _, newImage in
             if newImage != nil {
@@ -485,34 +492,75 @@ struct ChatView: View {
             .order(by: "timestamp", descending: false)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
-                    print("❌ Error: \(error)")
+                    print("❌ Error listening to messages: \(error)")
                     self.isLoading = false
                     return
                 }
                 
-                guard let documents = snapshot?.documents else {
+                guard let snapshot = snapshot else {
                     self.isLoading = false
                     return
                 }
                 
-                var newMessages: [Message] = []
-                
-                for document in documents {
-                    var data = document.data()
+                // Handle document changes to update existing messages efficiently
+                for change in snapshot.documentChanges {
+                    var data = change.document.data()
                     
+                    // Convert Firestore Timestamp to Date
                     if let timestamp = data["timestamp"] as? Timestamp {
                         data["timestamp"] = timestamp.dateValue()
                     }
                     
-                    if let message = Message.fromDictionary(data) {
-                        newMessages.append(message)
+                    guard let updatedMessage = Message.fromDictionary(data) else {
+                        continue
+                    }
+                    
+                    switch change.type {
+                    case .added:
+                        // Check if message already exists (to avoid duplicates)
+                        if !self.messages.contains(where: { $0.id == updatedMessage.id }) {
+                            self.messages.append(updatedMessage)
+                            print("📨 Added message: \(updatedMessage.id)")
+                            
+                            // Save to SwiftData
+                            self.modelContext.insert(updatedMessage)
+                            try? self.modelContext.save()
+                        }
+                        
+                    case .modified:
+                        // Find and update the existing message
+                        if let index = self.messages.firstIndex(where: { $0.id == updatedMessage.id }) {
+                            // Update the message properties while keeping the same object reference
+                            let existingMessage = self.messages[index]
+                            existingMessage.content = updatedMessage.content
+                            existingMessage.statusRaw = updatedMessage.statusRaw
+                            existingMessage.readBy = updatedMessage.readBy
+                            existingMessage.reactions = updatedMessage.reactions
+                            existingMessage.mediaURL = updatedMessage.mediaURL
+                            
+                            print("📝 Updated message \(updatedMessage.id) - readBy: \(updatedMessage.readBy), status: \(updatedMessage.statusRaw)")
+                            
+                            // Save to SwiftData
+                            try? self.modelContext.save()
+                            
+                            // Force UI update
+                            self.messages[index] = existingMessage
+                        }
+                        
+                    case .removed:
+                        self.messages.removeAll(where: { $0.id == updatedMessage.id })
+                        print("🗑️ Removed message: \(updatedMessage.id)")
                     }
                 }
                 
-                self.messages = newMessages
+                // Sort messages by timestamp
+                self.messages.sort { $0.timestamp < $1.timestamp }
+                
                 self.isLoading = false
                 
+                // Mark messages as read after a short delay
                 Task {
+                    try? await Task.sleep(nanoseconds: 300_000_000)
                     await self.markMessagesAsRead()
                 }
             }
@@ -615,12 +663,17 @@ struct ChatView: View {
                         .document(message.id)
                         .setData(messageData)
                     
+                    // Get all participants except the sender
+                    let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+                    
                     try await db.collection("conversations")
                         .document(conversation.id)
                         .updateData([
                             "lastMessage": content,
                             "lastMessageTime": Timestamp(date: Date()),
-                            "lastSenderID": currentUser.id
+                            "lastSenderID": currentUser.id,
+                            "lastMessageID": message.id,
+                            "unreadBy": otherParticipants
                         ])
                 }
             } catch {
@@ -666,12 +719,17 @@ struct ChatView: View {
                 .document(message.id)
                 .setData(messageData)
             
+            // Get all participants except the sender
+            let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+            
             try await db.collection("conversations")
                 .document(conversation.id)
                 .updateData([
                     "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
                     "lastMessageTime": Timestamp(date: Date()),
-                    "lastSenderID": currentUser.id
+                    "lastSenderID": currentUser.id,
+                    "lastMessageID": message.id,
+                    "unreadBy": otherParticipants
                 ])
             
             await MainActor.run {
@@ -723,12 +781,17 @@ struct ChatView: View {
                 .document(message.id)
                 .setData(messageData)
             
+            // Get all participants except the sender
+            let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+            
             try await db.collection("conversations")
                 .document(conversation.id)
                 .updateData([
                     "lastMessage": "🎤 Voice message",
                     "lastMessageTime": Timestamp(date: Date()),
-                    "lastSenderID": currentUser.id
+                    "lastSenderID": currentUser.id,
+                    "lastMessageID": message.id,
+                    "unreadBy": otherParticipants
                 ])
             
             print("✅ Voice message sent")
@@ -744,8 +807,14 @@ struct ChatView: View {
         let batch = db.batch()
         var batchCount = 0
         
+        // Track messages we're updating
+        var updatedMessageIDs: [String] = []
+        
         for message in messages {
+            // Skip messages sent by current user
             guard message.senderID != currentUser.id else { continue }
+            
+            // Skip messages already read by current user
             guard !message.readBy.contains(currentUser.id) else { continue }
             
             let messageRef = db.collection("conversations")
@@ -753,23 +822,63 @@ struct ChatView: View {
                 .collection("messages")
                 .document(message.id)
             
-            batch.updateData(["readBy": FieldValue.arrayUnion([currentUser.id])], forDocument: messageRef)
+            // Add current user to readBy array
+            batch.updateData([
+                "readBy": FieldValue.arrayUnion([currentUser.id])
+            ], forDocument: messageRef)
             
+            // For 1-on-1 chats, update status to "read"
             if !conversation.isGroup {
-                batch.updateData(["status": "read"], forDocument: messageRef)
+                batch.updateData([
+                    "status": "read"
+                ], forDocument: messageRef)
             }
             
+            updatedMessageIDs.append(message.id)
             batchCount += 1
+            
+            // Firestore batch limit is 500
+            if batchCount >= 500 {
+                break
+            }
         }
         
         if batchCount > 0 {
             do {
                 try await batch.commit()
+                print("✅ Marked \(batchCount) messages as read")
+                
+                // Update local SwiftData immediately for instant UI update
+                for messageID in updatedMessageIDs {
+                    if let index = messages.firstIndex(where: { $0.id == messageID }) {
+                        if !messages[index].readBy.contains(currentUser.id) {
+                            messages[index].readBy.append(currentUser.id)
+                            
+                            // Update status for 1-on-1 chats
+                            if !conversation.isGroup {
+                                messages[index].statusRaw = "read"
+                            }
+                            
+                            try? modelContext.save()
+                        }
+                    }
+                }
+                
+                // ✅ Remove current user from conversation's unreadBy array
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .updateData([
+                        "unreadBy": FieldValue.arrayRemove([currentUser.id])
+                    ])
+                
+                print("✅ Cleared unread indicator for conversation")
+                
             } catch {
-                print("❌ Error marking as read: \(error)")
+                print("❌ Error marking messages as read: \(error.localizedDescription)")
             }
         }
         
+        // For group chats, update message statuses based on readBy array
         if conversation.isGroup {
             await updateGroupMessageStatuses()
         }
@@ -782,6 +891,7 @@ struct ChatView: View {
         let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
         
         for message in messages where message.senderID == currentUser.id {
+            // Check if all other participants have read the message
             let allRead = otherParticipants.allSatisfy { message.readBy.contains($0) }
             
             let newStatus: String
@@ -790,15 +900,26 @@ struct ChatView: View {
             } else if !message.readBy.isEmpty {
                 newStatus = "delivered"
             } else {
-                continue
+                continue // No change needed
             }
             
+            // Only update if status changed
             if message.statusRaw != newStatus {
-                try? await db.collection("conversations")
-                    .document(conversation.id)
-                    .collection("messages")
-                    .document(message.id)
-                    .updateData(["status": newStatus])
+                do {
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .collection("messages")
+                        .document(message.id)
+                        .updateData(["status": newStatus])
+                    
+                    // Update local message
+                    message.statusRaw = newStatus
+                    try? modelContext.save()
+                    
+                    print("✅ Updated message \(message.id) status to \(newStatus)")
+                } catch {
+                    print("❌ Error updating status: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -937,27 +1058,35 @@ struct MessageBubble: View {
     
     private var statusIcon: String {
         switch message.status {
-        case .sending:
+        case .pending:
             return "clock"
+        case .sending:
+            return "arrow.up.circle"
         case .sent:
             return "checkmark"
         case .delivered:
             return "checkmark.circle"
         case .read:
             return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.circle"
         }
     }
     
     private var statusColor: Color {
         switch message.status {
+        case .pending:
+            return .orange
         case .sending:
-            return .gray
+            return .blue
         case .sent:
             return .gray
         case .delivered:
             return .gray
         case .read:
             return .blue
+        case .failed:
+            return .red
         }
     }
     

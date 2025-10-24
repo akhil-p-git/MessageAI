@@ -212,12 +212,12 @@ struct ConversationRow: View {
     }
     
     private func hasUnreadMessages() -> Bool {
-        guard let currentUser = authViewModel.currentUser,
-              let lastSenderID = conversation.lastSenderID else {
+        guard let currentUser = authViewModel.currentUser else {
             return false
         }
         
-        return lastSenderID != currentUser.id
+        // Check if current user is in the unreadBy array
+        return conversation.unreadBy.contains(currentUser.id)
     }
     
     private func formatTime(_ date: Date) -> String {

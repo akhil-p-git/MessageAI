@@ -9,7 +9,6 @@ import Foundation
 import Network
 import Combine
 
-@MainActor
 class NetworkMonitor: ObservableObject {
     static let shared = NetworkMonitor()
     
@@ -31,16 +30,16 @@ class NetworkMonitor: ObservableObject {
     }
     
     deinit {
-        stopMonitoring()
+        monitor.cancel()
     }
     
     // MARK: - Monitoring
     
     private func startMonitoring() {
         monitor.pathUpdateHandler = { [weak self] path in
-            Task { @MainActor in
-                guard let self = self else { return }
-                
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
                 let wasConnected = self.isConnected
                 self.isConnected = path.status == .satisfied
                 
@@ -68,11 +67,6 @@ class NetworkMonitor: ObservableObject {
         
         monitor.start(queue: queue)
         print("🌐 NetworkMonitor: Started monitoring")
-    }
-    
-    private func stopMonitoring() {
-        monitor.cancel()
-        print("🌐 NetworkMonitor: Stopped monitoring")
     }
     
     // MARK: - Public API

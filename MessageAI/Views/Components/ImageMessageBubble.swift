@@ -117,27 +117,35 @@ struct ImageMessageBubble: View {
     
     private var statusIcon: String {
         switch message.status {
-        case .sending:
+        case .pending:
             return "clock"
+        case .sending:
+            return "arrow.up.circle"
         case .sent:
             return "checkmark"
         case .delivered:
             return "checkmark.circle"
         case .read:
             return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.circle"
         }
     }
     
     private var statusColor: Color {
         switch message.status {
+        case .pending:
+            return .orange
         case .sending:
-            return .gray
+            return .blue
         case .sent:
             return .gray
         case .delivered:
             return .gray
         case .read:
             return .blue
+        case .failed:
+            return .red
         }
     }
     

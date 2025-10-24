@@ -15,9 +15,11 @@ class Conversation: Identifiable {
     var lastMessage: String?
     var lastMessageTime: Date?
     var lastSenderID: String?
+    var lastMessageID: String?
+    var unreadBy: [String] = []
     var creatorID: String?
     
-    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, creatorID: String? = nil) {
+    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, lastMessageID: String? = nil, unreadBy: [String] = [], creatorID: String? = nil) {
         self.id = id
         self.isGroup = isGroup
         self.participantIDs = participantIDs
@@ -25,6 +27,8 @@ class Conversation: Identifiable {
         self.lastMessage = lastMessage
         self.lastMessageTime = lastMessageTime
         self.lastSenderID = lastSenderID
+        self.lastMessageID = lastMessageID
+        self.unreadBy = unreadBy
         self.creatorID = creatorID
     }
     
@@ -32,7 +36,8 @@ class Conversation: Identifiable {
         var dict: [String: Any] = [
             "id": id,
             "isGroup": isGroup,
-            "participantIDs": participantIDs
+            "participantIDs": participantIDs,
+            "unreadBy": unreadBy
         ]
         
         if let name = name {
@@ -49,6 +54,10 @@ class Conversation: Identifiable {
         
         if let lastSenderID = lastSenderID {
             dict["lastSenderID"] = lastSenderID
+        }
+        
+        if let lastMessageID = lastMessageID {
+            dict["lastMessageID"] = lastMessageID
         }
         
         if let creatorID = creatorID {
@@ -69,6 +78,8 @@ class Conversation: Identifiable {
         let lastMessage = data["lastMessage"] as? String
         let lastMessageTime = data["lastMessageTime"] as? Date
         let lastSenderID = data["lastSenderID"] as? String
+        let lastMessageID = data["lastMessageID"] as? String
+        let unreadBy = data["unreadBy"] as? [String] ?? []
         let creatorID = data["creatorID"] as? String
         
         return Conversation(
@@ -79,6 +90,8 @@ class Conversation: Identifiable {
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             lastSenderID: lastSenderID,
+            lastMessageID: lastMessageID,
+            unreadBy: unreadBy,
             creatorID: creatorID
         )
     }

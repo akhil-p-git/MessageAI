@@ -133,6 +133,9 @@ struct NewGroupChatView: View {
             var participantIDs = Array(selectedUsers)
             participantIDs.append(currentUser.id)
             
+            // Mark as unread for all participants except the creator
+            let otherParticipants = participantIDs.filter { $0 != currentUser.id }
+            
             let conversation = Conversation(
                 id: conversationID,
                 isGroup: true,
@@ -140,6 +143,8 @@ struct NewGroupChatView: View {
                 name: groupName,
                 lastMessage: "\(currentUser.displayName) created the group",
                 lastMessageTime: Date(),
+                lastSenderID: currentUser.id,
+                unreadBy: otherParticipants,
                 creatorID: currentUser.id
             )
             
