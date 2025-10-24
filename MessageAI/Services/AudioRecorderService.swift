@@ -44,8 +44,9 @@ class AudioRecorderService: NSObject, ObservableObject {
             
         case .undetermined:
             print("⏳ Requesting microphone permission...")
+            // Request permission asynchronously to avoid blocking
             AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-                Task { @MainActor in
+                DispatchQueue.main.async {
                     guard let self = self else { return }
                     
                     if granted {

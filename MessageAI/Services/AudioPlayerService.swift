@@ -13,6 +13,10 @@ class AudioPlayerService: NSObject, ObservableObject {
     private var timer: Timer?
     
     func playAudio(url: URL, messageID: String) {
+        print("\n🔊 AudioPlayerService: Attempting to play audio...")
+        print("   URL: \(url)")
+        print("   Message ID: \(messageID.prefix(8))...")
+        
         if playingMessageID == messageID && isPlaying {
             pauseAudio()
             return
@@ -21,6 +25,12 @@ class AudioPlayerService: NSObject, ObservableObject {
         stopAudio()
         
         do {
+            // Configure audio session for playback
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [])
+            try audioSession.setActive(true)
+            print("   ✅ Audio session configured for playback")
+            
             audioPlayer = try AVAudioPlayer(contentsOf: url)
             audioPlayer?.delegate = self
             audioPlayer?.prepareToPlay()
@@ -28,8 +38,13 @@ class AudioPlayerService: NSObject, ObservableObject {
             duration = audioPlayer?.duration ?? 0
             playingMessageID = messageID
             
+            print("   ✅ Audio player initialized")
+            print("   Duration: \(duration)s")
+            
             audioPlayer?.play()
             isPlaying = true
+            
+            print("   ✅ Playback started!")
             
             timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
@@ -39,6 +54,11 @@ class AudioPlayerService: NSObject, ObservableObject {
             }
         } catch {
             print("❌ Error playing audio: \(error)")
+            print("   Error details: \(error.localizedDescription)")
+            if let nsError = error as NSError? {
+                print("   Error code: \(nsError.code)")
+                print("   Error domain: \(nsError.domain)")
+            }
         }
     }
     
