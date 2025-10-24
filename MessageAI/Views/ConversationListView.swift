@@ -276,12 +276,6 @@ struct ConversationRow: View {
     let userCache: [String: User]
     @EnvironmentObject var authViewModel: AuthViewModel
     
-    @State private var typingUsers: [String] = []
-    @State private var typingListener: ListenerRegistration?
-    @State private var presenceListener: ListenerRegistration?
-    @State private var otherUserOnline: Bool = false
-    @State private var otherUserShowStatus: Bool = true
-    
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
@@ -304,8 +298,8 @@ struct ConversationRow: View {
                             fallbackText: otherUser.displayName
                         )
                         
-                        // Show online status using real-time state
-                        if otherUserShowStatus && otherUserOnline {
+                        // Show online status from cached user data (not real-time in list)
+                        if otherUser.showOnlineStatus && otherUser.isOnline {
                             OnlineStatusIndicator(
                                 isOnline: true,
                                 size: 14
@@ -336,30 +330,11 @@ struct ConversationRow: View {
                 }
                 
                 HStack {
-                    // Show typing indicator if someone is typing
-                    if !typingUsers.isEmpty {
-                        HStack(spacing: 4) {
-                            Text("typing")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                                .italic()
-                            
-                            // Animated dots
-                            HStack(spacing: 2) {
-                                ForEach(0..<3) { _ in
-                                    Circle()
-                                        .fill(Color.secondary)
-                                        .frame(width: 4, height: 4)
-                                }
-                            }
-                        }
-                    } else {
-                        // Show last message
-                        Text(conversation.lastMessage ?? "No messages yet")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
+                    // Show last message
+                    Text(conversation.lastMessage ?? "No messages yet")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                     
                     Spacer()
                     
@@ -372,14 +347,6 @@ struct ConversationRow: View {
             }
         }
         .padding(.vertical, 4)
-        .onAppear {
-            startListeningForTyping()
-            startListeningForPresence()
-        }
-        .onDisappear {
-            typingListener?.remove()
-            presenceListener?.remove()
-        }
     }
     
     private func getConversationName() -> String {
