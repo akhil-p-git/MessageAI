@@ -189,10 +189,16 @@ function formatMessagesForAI(messages) {
     let date = new Date();
     if (msg.timestamp && msg.timestamp.toDate) {
       date = msg.timestamp.toDate();
+    } else if (msg.timestamp instanceof Date) {
+      date = msg.timestamp;
+    } else if (typeof msg.timestamp === 'string') {
+      date = new Date(msg.timestamp);
     }
-    const senderName = msg.senderName || 'Unknown';
-    const text = msg.text || '';
-    return '[' + date.toLocaleString() + '] ' + senderName + ': ' + text;
+    
+    const senderName = msg.senderName || msg.sender || 'Unknown';
+    const text = msg.content || msg.text || '';  // Check both 'content' and 'text'
+    
+    return `[${date.toLocaleString()}] ${senderName}: ${text}`;
   }).join('\n');
 }
 

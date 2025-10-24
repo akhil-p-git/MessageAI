@@ -1,24 +1,84 @@
 # MessageAI
 
-A modern iOS messaging application built with SwiftUI and Firebase, featuring real-time chat capabilities and AI-powered features.
+A **production-ready iOS messaging application** built with SwiftUI and Firebase, featuring real-time chat capabilities, AI-powered insights, voice messages, and comprehensive offline support.
 
-## Features
+## ✨ Features
 
+### **Core Messaging**
 - 🔐 **Authentication**: Email/password authentication with Firebase Auth
 - 💬 **Real-time Messaging**: Instant messaging powered by Firebase Firestore
-- 👤 **User Profiles**: Custom user profiles with online status tracking
-- 🎨 **Modern UI**: Beautiful SwiftUI interface with gradient designs
-- 📱 **iOS Native**: Built with SwiftUI for iOS 17+
-- 🔔 **Push Notifications**: FCM token support for push notifications
-- 💾 **Local Persistence**: SwiftData integration for offline support
+- 👥 **Group Chats**: Create and manage group conversations with multiple participants
+- 💭 **Typing Indicators**: See when someone is typing in real-time
+- 🟢 **Online Status**: Live presence indicators with privacy controls
+- 👁️ **Read Receipts**: Single/double checkmarks with read count for group chats
+- 💬 **Message Reactions**: React to messages with emojis
+- ↩️ **Reply & Forward**: Quote messages and forward to other chats
+- 🗑️ **Delete Messages**: Delete for yourself or everyone
+- 🔍 **Search Messages**: Find messages within conversations
+
+### **Media & Rich Content**
+- 📸 **Image Sharing**: Send and receive photos with full-screen preview
+- 🎤 **Voice Messages**: Record and play voice messages with real-time recording
+- 🖼️ **Image Preview**: Preview images before sending
+- 👤 **Profile Pictures**: Upload and update profile pictures
+
+### **AI-Powered Features** ⭐
+- 🤖 **AI Summary**: GPT-4 powered conversation summarization
+- ✅ **Action Items**: Automatically extract tasks from conversations
+- 🎯 **Decision Tracking**: Track team decisions made in chats
+- 🔍 **Smart Search**: Semantic search across conversation history
+- ⚡ **Priority Detection**: Identify urgent messages automatically
+
+### **Advanced Features**
+- 🔔 **Push Notifications**: Firebase Cloud Messaging integration
+- 📱 **Local Notifications**: In-app notification banners
+- 📴 **Offline Support**: Message queuing and sync when offline
+- 🌐 **Network Monitoring**: Real-time connectivity status
+- 💾 **Local Persistence**: SwiftData integration for message caching
+- 🎨 **Theme Switching**: Light, Dark, and System themes
+- 🔒 **Privacy Controls**: Control online status visibility
+- 🚫 **Block & Report**: Block users and report inappropriate content
 
 ## Tech Stack
 
-- **Frontend**: SwiftUI
-- **Backend**: Firebase (Authentication, Firestore)
+- **Frontend**: SwiftUI (iOS 17+)
+- **Backend**: Firebase (Authentication, Firestore, Storage, Functions, Cloud Messaging)
+- **AI/ML**: OpenAI GPT-4 (via Firebase Cloud Functions)
 - **Local Storage**: SwiftData
 - **Architecture**: MVVM (Model-View-ViewModel)
 - **Minimum iOS Version**: iOS 17.0+
+
+## 🏗️ Architecture
+
+### **Services** (15+ specialized services)
+- `AuthService` - User authentication and management
+- `ConversationService` - Chat conversation handling
+- `MediaService` - Image and media uploads
+- `AudioRecorderService` - Voice message recording
+- `AudioPlayerService` - Voice message playback
+- `AIService` - AI features via Firebase Functions
+- `NotificationManager` - Push and local notifications
+- `NetworkMonitor` - Internet connectivity monitoring
+- `MessageSyncService` - Offline message queuing
+- `TypingIndicatorService` - Real-time typing status
+- `PresenceService` - Online status tracking
+- `ReactionService` - Message reactions
+- `DeleteMessageService` - Message deletion
+- `BlockUserService` - User blocking
+- `ThemeManager` - App theme management
+
+### **Models**
+- `User` - User data with SwiftData + Firestore sync
+- `Conversation` - Chat conversations with metadata
+- `Message` - Chat messages with offline support
+- `AIModels` - AI feature data structures
+
+### **Views** (20+ reusable components)
+- Auth views (Login, SignUp)
+- Chat views (ChatView, ConversationListView, NewChatView)
+- AI views (Summary, Action Items, Decisions, Smart Search)
+- Component views (Message bubbles, Reactions, Typing indicators)
+- Settings views (Privacy, Appearance, Notifications)
 
 ## Project Structure
 
@@ -172,16 +232,29 @@ The app includes comprehensive error handling with custom error types:
 
 ## Roadmap
 
-- [ ] Real-time messaging functionality
-- [ ] Group chats
-- [ ] Media sharing (images, videos)
-- [ ] Voice messages
-- [ ] AI-powered features
-- [ ] Push notifications
-- [ ] User search
-- [ ] Profile customization
-- [ ] Dark mode support
+### ✅ **Completed Features**
+- [x] Real-time messaging functionality
+- [x] Group chats
+- [x] Media sharing (images, voice messages)
+- [x] AI-powered features (5 agents!)
+- [x] Push notifications
+- [x] User search
+- [x] Profile customization
+- [x] Dark mode support
+- [x] Offline support with message queuing
+- [x] Read receipts and typing indicators
+- [x] Message reactions
+- [x] Privacy controls
+
+### 🚀 **Future Enhancements**
 - [ ] End-to-end encryption
+- [ ] Video calls
+- [ ] Stories/Status updates
+- [ ] Message polls
+- [ ] Location sharing
+- [ ] GIF support
+- [ ] Stickers
+- [ ] Message translation
 
 ## License
 

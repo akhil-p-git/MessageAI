@@ -66,24 +66,66 @@ struct VoiceMessageBubble: View {
     }
     
     private func downloadAndPlay(url: URL) {
+        print("\n📥 VoiceMessageBubble: Downloading audio...")
+        print("   URL: \(url.absoluteString)")
+        
         isLoading = true
         
         URLSession.shared.downloadTask(with: url) { localURL, response, error in
-            guard let localURL = localURL, error == nil else {
-                print("❌ Download error: \(error?.localizedDescription ?? "Unknown")")
+            if let error = error {
+                print("❌ Download error: \(error.localizedDescription)")
                 Task { @MainActor in
-                    isLoading = false
+                    self.isLoading = false
                 }
                 return
             }
             
-            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
-            try? FileManager.default.removeItem(at: tempURL)
-            try? FileManager.default.moveItem(at: localURL, to: tempURL)
+            guard let localURL = localURL else {
+                print("❌ Download failed: No local URL")
+                Task { @MainActor in
+                    self.isLoading = false
+                }
+                return
+            }
             
-            Task { @MainActor in
-                isLoading = false
-                player.playAudio(url: tempURL, messageID: message.id)
+            print("   ✅ Downloaded to: \(localURL.path)")
+            
+            // Create a proper temp file with .m4a extension
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("m4a")
+            
+            print("   📁 Moving to temp location: \(tempURL.path)")
+            
+            do {
+                // Remove old file if it exists
+                if FileManager.default.fileExists(atPath: tempURL.path) {
+                    try FileManager.default.removeItem(at: tempURL)
+                }
+                
+                // Move the downloaded file
+                try FileManager.default.moveItem(at: localURL, to: tempURL)
+                
+                // Verify the file exists and has content
+                let attributes = try FileManager.default.attributesOfItem(atPath: tempURL.path)
+                let fileSize = attributes[.size] as? Int ?? 0
+                print("   ✅ File moved successfully")
+                print("   File size: \(fileSize) bytes")
+                
+                if fileSize == 0 {
+                    print("   ⚠️ WARNING: File is empty!")
+                }
+                
+                Task { @MainActor in
+                    self.isLoading = false
+                    print("   🎵 Starting playback...")
+                    self.player.playAudio(url: tempURL, messageID: self.message.id)
+                }
+            } catch {
+                print("❌ Error moving file: \(error.localizedDescription)")
+                Task { @MainActor in
+                    self.isLoading = false
+                }
             }
         }.resume()
     }

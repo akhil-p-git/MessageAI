@@ -14,7 +14,7 @@ class AudioPlayerService: NSObject, ObservableObject {
     
     func playAudio(url: URL, messageID: String) {
         print("\n🔊 AudioPlayerService: Attempting to play audio...")
-        print("   URL: \(url)")
+        print("   URL: \(url.path)")
         print("   Message ID: \(messageID.prefix(8))...")
         
         if playingMessageID == messageID && isPlaying {
@@ -24,28 +24,71 @@ class AudioPlayerService: NSObject, ObservableObject {
         
         stopAudio()
         
+        // Verify file exists
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("❌ File does not exist at path: \(url.path)")
+            return
+        }
+        
+        // Check file size
         do {
-            // CRITICAL: Use .playAndRecord so we can play recorded audio
-            // .playback mode doesn't work with recordings made in .playAndRecord mode
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let fileSize = attributes[.size] as? Int ?? 0
+            print("   📁 File exists")
+            print("   File size: \(fileSize) bytes")
+            
+            if fileSize == 0 {
+                print("❌ File is empty (0 bytes)")
+                return
+            }
+        } catch {
+            print("❌ Cannot read file attributes: \(error.localizedDescription)")
+            return
+        }
+        
+        do {
+            // Configure audio session for playback
             let audioSession = AVAudioSession.sharedInstance()
+            
+            // First, try to deactivate any existing session
+            try? audioSession.setActive(false)
+            
+            // Set category for playback - use .playAndRecord to match recording format
             try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
             try audioSession.setActive(true)
             print("   ✅ Audio session configured for playback")
+            print("      Category: \(audioSession.category.rawValue)")
+            print("      Available: \(audioSession.isOtherAudioPlaying ? "Other audio playing" : "Ready")")
             
+            // Try to create the audio player
+            print("   🎵 Creating audio player...")
             audioPlayer = try AVAudioPlayer(contentsOf: url)
             audioPlayer?.delegate = self
-            audioPlayer?.prepareToPlay()
             
-            duration = audioPlayer?.duration ?? 0
+            guard let player = audioPlayer else {
+                print("❌ Failed to create audio player")
+                return
+            }
+            
+            // Prepare to play
+            let prepared = player.prepareToPlay()
+            print("   Prepare to play: \(prepared ? "Success" : "Failed")")
+            
+            duration = player.duration
             playingMessageID = messageID
             
             print("   ✅ Audio player initialized")
             print("   Duration: \(duration)s")
+            print("   Format: \(player.format)")
+            print("   Channels: \(player.numberOfChannels)")
             
-            let playSuccess = audioPlayer?.play() ?? false
+            // Start playback
+            let playSuccess = player.play()
             if playSuccess {
                 isPlaying = true
                 print("   ✅ Playback started!")
+                print("   Volume: \(player.volume)")
+                print("   Is playing: \(player.isPlaying)")
                 
                 timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
                     guard let self = self else { return }
@@ -55,13 +98,25 @@ class AudioPlayerService: NSObject, ObservableObject {
                 }
             } else {
                 print("   ❌ Playback failed to start")
+                print("   Player state: isPlaying=\(player.isPlaying)")
             }
-        } catch {
-            print("❌ Error playing audio: \(error)")
-            print("   Error details: \(error.localizedDescription)")
-            if let nsError = error as NSError? {
-                print("   Error code: \(nsError.code)")
-                print("   Error domain: \(nsError.domain)")
+        } catch let error as NSError {
+            print("❌ Error playing audio!")
+            print("   Error: \(error.localizedDescription)")
+            print("   Domain: \(error.domain)")
+            print("   Code: \(error.code)")
+            print("   User Info: \(error.userInfo)")
+            
+            // Decode common audio errors
+            switch error.code {
+            case -11020, 2003334207:
+                print("   → Invalid or unsupported audio file format")
+            case -50:
+                print("   → Invalid parameter")
+            case -43:
+                print("   → File not found")
+            default:
+                print("   → Unknown audio error")
             }
         }
     }
