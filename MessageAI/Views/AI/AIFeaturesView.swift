@@ -322,6 +322,9 @@ struct DebugPanelView: View {
     @State private var isGeneratingTestData = false
     @State private var testDataMessage = ""
     @State private var showTestDataAlert = false
+    @State private var isTestingFirebase = false
+    @State private var firebaseTestResult = ""
+    @State private var showFirebaseTestAlert = false
     
     var body: some View {
         NavigationView {
@@ -365,6 +368,44 @@ struct DebugPanelView: View {
                     Text("Connection Status")
                 } footer: {
                     Text("Verifies that Firebase Cloud Functions are accessible and responding.")
+                }
+                
+                // Test Firebase Functions Section
+                Section {
+                    Button {
+                        Task {
+                            await testFirebaseFunction()
+                        }
+                    } label: {
+                        HStack {
+                            Image(systemName: "bolt.circle")
+                            Text("Test AI Summary Function")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .disabled(isTestingFirebase)
+                    
+                    if isTestingFirebase {
+                        HStack {
+                            ProgressView()
+                            Text("Testing Firebase Functions...")
+                                .font(.caption)
+                        }
+                    }
+                    
+                    if !firebaseTestResult.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(firebaseTestResult)
+                                .font(.caption)
+                                .foregroundColor(firebaseTestResult.contains("✅") ? .green : .red)
+                                .textSelection(.enabled)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                } header: {
+                    Text("Function Testing")
+                } footer: {
+                    Text("Tests the actual summarizeThread function with the current conversation. Check console for detailed logs.")
                 }
                 
                 // Test Data Section
@@ -510,6 +551,64 @@ struct DebugPanelView: View {
         }
         
         isGeneratingTestData = false
+    }
+    
+    private func testFirebaseFunction() async {
+        isTestingFirebase = true
+        firebaseTestResult = "Testing..."
+        
+        print("\n🧪 ============================================")
+        print("🧪 FIREBASE FUNCTIONS TEST")
+        print("🧪 ============================================")
+        print("📱 Conversation ID: \(conversationID)")
+        print("👤 User: \(authViewModel.currentUser?.displayName ?? "Unknown")")
+        print("🧪 ============================================\n")
+        
+        do {
+            let summary = try await AIService.shared.summarizeThread(
+                conversationID: conversationID,
+                messageLimit: 50
+            )
+            
+            var result = "✅ SUCCESS!\n\n"
+            result += "Function: summarizeThread\n"
+            result += "Points returned: \(summary.points.count)\n"
+            result += "Messages analyzed: \(summary.messageCount)\n\n"
+            result += "Summary:\n"
+            for (index, point) in summary.points.enumerated() {
+                result += "\(index + 1). \(point)\n"
+            }
+            
+            firebaseTestResult = result
+            
+            print("\n✅ ============================================")
+            print("✅ TEST PASSED")
+            print("✅ ============================================\n")
+            
+        } catch let error as AIServiceError {
+            firebaseTestResult = "❌ ERROR\n\n\(error.localizedDescription)"
+            if let suggestion = error.recoverySuggestion {
+                firebaseTestResult += "\n\n💡 Suggestion:\n\(suggestion)"
+            }
+            
+            print("\n❌ ============================================")
+            print("❌ TEST FAILED")
+            print("❌ Error: \(error.localizedDescription)")
+            if let suggestion = error.recoverySuggestion {
+                print("💡 Suggestion: \(suggestion)")
+            }
+            print("❌ ============================================\n")
+            
+        } catch {
+            firebaseTestResult = "❌ UNEXPECTED ERROR\n\n\(error.localizedDescription)"
+            
+            print("\n❌ ============================================")
+            print("❌ UNEXPECTED ERROR")
+            print("❌ \(error)")
+            print("❌ ============================================\n")
+        }
+        
+        isTestingFirebase = false
     }
 }
 

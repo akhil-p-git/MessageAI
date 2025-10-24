@@ -12,6 +12,11 @@ enum AIServiceError: LocalizedError {
     case invalidResponse
     case networkError(Error)
     case parsingError
+    case unauthenticated
+    case functionNotFound(String)
+    case permissionDenied
+    case timeout
+    case retryLimitExceeded
     
     var errorDescription: String? {
         switch self {
@@ -21,6 +26,33 @@ enum AIServiceError: LocalizedError {
             return "Network error: \(error.localizedDescription)"
         case .parsingError:
             return "Failed to parse AI response"
+        case .unauthenticated:
+            return "Please sign in to use AI features"
+        case .functionNotFound(let name):
+            return "AI function '\(name)' not found. Please deploy Firebase Functions."
+        case .permissionDenied:
+            return "Permission denied. Check your Firebase security rules."
+        case .timeout:
+            return "Request timed out. Please check your internet connection."
+        case .retryLimitExceeded:
+            return "Failed after multiple retries. Please try again later."
+        }
+    }
+    
+    var recoverySuggestion: String? {
+        switch self {
+        case .unauthenticated:
+            return "Sign out and sign back in to refresh your authentication."
+        case .functionNotFound:
+            return "Deploy your Firebase Cloud Functions using 'firebase deploy --only functions'"
+        case .permissionDenied:
+            return "Check Firebase console for security rules configuration."
+        case .timeout, .networkError:
+            return "Check your internet connection and try again."
+        case .retryLimitExceeded:
+            return "The service may be temporarily unavailable. Please try again in a few minutes."
+        default:
+            return nil
         }
     }
 }
@@ -30,6 +62,8 @@ class AIService {
     static let shared = AIService()
     private let functions = Functions.functions()
     private let debugMode = true // Set to false in production
+    private let maxRetries = 3
+    private let baseRetryDelay: TimeInterval = 1.0 // seconds
     
     private init() {
         // Optionally set region if needed
@@ -37,6 +71,99 @@ class AIService {
         if debugMode {
             print("🤖 AIService initialized")
         }
+    }
+    
+    // MARK: - Retry Logic
+    
+    private func executeWithRetry<T>(
+        functionName: String,
+        operation: @escaping () async throws -> T
+    ) async throws -> T {
+        var lastError: Error?
+        
+        for attempt in 1...maxRetries {
+            do {
+                log("Attempt \(attempt) of \(maxRetries)", type: .info)
+                return try await operation()
+            } catch {
+                lastError = error
+                
+                // Check if error is retryable
+                if !isRetryableError(error) {
+                    log("Non-retryable error encountered", type: .error)
+                    throw parseFirebaseError(error, functionName: functionName)
+                }
+                
+                // Don't retry on last attempt
+                if attempt < maxRetries {
+                    let delay = baseRetryDelay * pow(2.0, Double(attempt - 1))
+                    log("Retrying in \(delay) seconds...", type: .warning)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+        
+        log("Max retries exceeded", type: .error)
+        throw AIServiceError.retryLimitExceeded
+    }
+    
+    private func isRetryableError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        
+        // Retry on network errors
+        if nsError.domain == NSURLErrorDomain {
+            let retryableCodes = [
+                NSURLErrorTimedOut,
+                NSURLErrorCannotFindHost,
+                NSURLErrorCannotConnectToHost,
+                NSURLErrorNetworkConnectionLost,
+                NSURLErrorNotConnectedToInternet
+            ]
+            return retryableCodes.contains(nsError.code)
+        }
+        
+        // Retry on server errors (5xx)
+        if let functionsError = error as? FunctionsErrorCode {
+            return functionsError == .unavailable || functionsError == .deadlineExceeded
+        }
+        
+        return false
+    }
+    
+    private func parseFirebaseError(_ error: Error, functionName: String) -> AIServiceError {
+        let nsError = error as NSError
+        
+        log("Parsing error - Domain: \(nsError.domain), Code: \(nsError.code)", type: .error)
+        log("Error description: \(error.localizedDescription)", type: .error)
+        
+        // Check for Functions-specific errors
+        if nsError.domain == "FIRFunctionsErrorDomain" {
+            switch nsError.code {
+            case FunctionsErrorCode.unauthenticated.rawValue:
+                log("Error: User not authenticated", type: .error)
+                return .unauthenticated
+            case FunctionsErrorCode.notFound.rawValue:
+                log("Error: Function '\(functionName)' not found", type: .error)
+                return .functionNotFound(functionName)
+            case FunctionsErrorCode.permissionDenied.rawValue:
+                log("Error: Permission denied", type: .error)
+                return .permissionDenied
+            case FunctionsErrorCode.deadlineExceeded.rawValue:
+                log("Error: Request timeout", type: .error)
+                return .timeout
+            default:
+                break
+            }
+        }
+        
+        // Check for network errors
+        if nsError.domain == NSURLErrorDomain {
+            if nsError.code == NSURLErrorTimedOut {
+                return .timeout
+            }
+        }
+        
+        return .networkError(error)
     }
     
     // MARK: - Debug Logging
@@ -93,35 +220,28 @@ class AIService {
         log("📤 Calling summarizeThread", type: .request)
         log("ConversationID: \(conversationID), MessageLimit: \(messageLimit)", type: .info)
         
-        let callable = functions.httpsCallable("summarizeThread")
-        
-        do {
+        return try await executeWithRetry(functionName: "summarizeThread") {
+            let callable = self.functions.httpsCallable("summarizeThread")
+            
             let result = try await callable.call([
                 "conversationId": conversationID,
                 "messageLimit": messageLimit
             ])
             
-            log("📥 Received response from summarizeThread", type: .response)
+            self.log("📥 Received response from summarizeThread", type: .response)
             
             if let data = result.data as? [String: Any] {
-                log("Response data: \(data)", type: .info)
+                self.log("Response data: \(data)", type: .info)
             }
             
             guard let data = result.data as? [String: Any],
                   let summary = ConversationSummary(from: data) else {
-                log("Failed to parse summary from response", type: .error)
+                self.log("Failed to parse summary from response", type: .error)
                 throw AIServiceError.parsingError
             }
             
-            log("✅ Successfully parsed summary with \(summary.points.count) points", type: .success)
+            self.log("✅ Successfully parsed summary with \(summary.points.count) points", type: .success)
             return summary
-        } catch {
-            log("❌ Error in summarizeThread: \(error.localizedDescription)", type: .error)
-            if let nsError = error as NSError? {
-                log("Error domain: \(nsError.domain), code: \(nsError.code)", type: .error)
-                log("Error userInfo: \(nsError.userInfo)", type: .error)
-            }
-            throw AIServiceError.networkError(error)
         }
     }
     
@@ -131,33 +251,27 @@ class AIService {
         log("📤 Calling extractActionItems", type: .request)
         log("ConversationID: \(conversationID)", type: .info)
         
-        let callable = functions.httpsCallable("extractActionItems")
-        
-        do {
+        return try await executeWithRetry(functionName: "extractActionItems") {
+            let callable = self.functions.httpsCallable("extractActionItems")
+            
             let result = try await callable.call([
                 "conversationId": conversationID
             ])
             
-            log("📥 Received response from extractActionItems", type: .response)
+            self.log("📥 Received response from extractActionItems", type: .response)
             
             if let data = result.data as? [String: Any] {
-                log("Response data: \(data)", type: .info)
+                self.log("Response data: \(data)", type: .info)
             }
             
             guard let data = result.data as? [String: Any],
                   let actionItems = ActionItemsResult(from: data) else {
-                log("Failed to parse action items from response", type: .error)
+                self.log("Failed to parse action items from response", type: .error)
                 throw AIServiceError.parsingError
             }
             
-            log("✅ Successfully parsed \(actionItems.items.count) action items", type: .success)
+            self.log("✅ Successfully parsed \(actionItems.items.count) action items", type: .success)
             return actionItems
-        } catch {
-            log("❌ Error in extractActionItems: \(error.localizedDescription)", type: .error)
-            if let nsError = error as NSError? {
-                log("Error domain: \(nsError.domain), code: \(nsError.code)", type: .error)
-            }
-            throw AIServiceError.networkError(error)
         }
     }
     
@@ -201,30 +315,27 @@ class AIService {
         log("📤 Calling trackDecisions", type: .request)
         log("ConversationID: \(conversationID)", type: .info)
         
-        let callable = functions.httpsCallable("trackDecisions")
-        
-        do {
+        return try await executeWithRetry(functionName: "trackDecisions") {
+            let callable = self.functions.httpsCallable("trackDecisions")
+            
             let result = try await callable.call([
                 "conversationId": conversationID
             ])
             
-            log("📥 Received response from trackDecisions", type: .response)
+            self.log("📥 Received response from trackDecisions", type: .response)
             
             if let data = result.data as? [String: Any] {
-                log("Response data: \(data)", type: .info)
+                self.log("Response data: \(data)", type: .info)
             }
             
             guard let data = result.data as? [String: Any],
                   let decisions = DecisionsResult(from: data) else {
-                log("Failed to parse decisions from response", type: .error)
+                self.log("Failed to parse decisions from response", type: .error)
                 throw AIServiceError.parsingError
             }
             
-            log("✅ Successfully tracked \(decisions.decisions.count) decisions", type: .success)
+            self.log("✅ Successfully tracked \(decisions.decisions.count) decisions", type: .success)
             return decisions
-        } catch {
-            log("❌ Error in trackDecisions: \(error.localizedDescription)", type: .error)
-            throw AIServiceError.networkError(error)
         }
     }
     
