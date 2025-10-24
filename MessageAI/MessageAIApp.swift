@@ -7,6 +7,8 @@ import UserNotifications
 @main
 struct MessageAIApp: App {
     @StateObject private var themeManager = ThemeManager()
+    @StateObject private var authViewModel = AuthViewModel()
+    @Environment(\.scenePhase) private var scenePhase
     
     init() {
         FirebaseApp.configure()
@@ -20,6 +22,7 @@ struct MessageAIApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(themeManager)
+                .environmentObject(authViewModel)
                 .preferredColorScheme(themeManager.currentColorScheme)
                 .onAppear {
                     #if DEBUG
@@ -34,6 +37,42 @@ struct MessageAIApp: App {
                 }
         }
         .modelContainer(for: [User.self, Conversation.self, Message.self])
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            handleScenePhaseChange(oldPhase: oldPhase, newPhase: newPhase)
+        }
+    }
+    
+    // MARK: - Scene Phase Handling
+    
+    private func handleScenePhaseChange(oldPhase: ScenePhase, newPhase: ScenePhase) {
+        guard let currentUser = authViewModel.currentUser else {
+            return
+        }
+        
+        Task {
+            switch newPhase {
+            case .active:
+                // App became active (foreground)
+                print("🟢 App became active - setting user online")
+                await PresenceService.shared.startPresenceUpdates(
+                    userID: currentUser.id,
+                    showOnlineStatus: currentUser.showOnlineStatus
+                )
+                
+            case .inactive:
+                // App became inactive (transitioning)
+                print("🟡 App became inactive")
+                // Don't change presence yet - might just be a temporary transition
+                
+            case .background:
+                // App went to background
+                print("🔴 App went to background - setting user offline")
+                await PresenceService.shared.stopPresenceUpdates(userID: currentUser.id)
+                
+            @unknown default:
+                break
+            }
+        }
     }
     
     // MARK: - Firebase Configuration Verification

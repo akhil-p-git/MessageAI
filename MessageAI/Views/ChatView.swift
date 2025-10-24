@@ -217,6 +217,11 @@ struct ChatView: View {
                 await markMessagesAsRead()
             }
             
+            // Sync pending messages when view appears
+            Task {
+                await syncPendingMessages()
+            }
+            
             #if DEBUG
             // Quick Firebase connectivity test
             Task {
@@ -230,6 +235,15 @@ struct ChatView: View {
                 }
             }
             #endif
+        }
+        .onChange(of: networkMonitor.isConnected) { oldValue, newValue in
+            // When connection is restored, sync pending messages
+            if !oldValue && newValue {
+                print("🌐 Connection restored! Syncing pending messages...")
+                Task {
+                    await syncPendingMessages()
+                }
+            }
         }
         .onDisappear {
             print("👋 ChatView: Cleaning up listeners...")
@@ -934,17 +948,17 @@ struct ChatView: View {
         replyingToMessage = nil
         replyToSenderName = nil
         
-        // Use offline-first approach: save locally first, then sync
+        // Add to local messages array immediately (optimistic UI)
+        messages.append(message)
+        modelContext.insert(message)
+        try? modelContext.save()
+        
+        print("📝 Message added to local array with status: \(message.status)")
+        
+        // Upload to Firebase (or queue for later if offline)
         Task {
             do {
-                try await syncService.queueMessage(
-                    message,
-                    conversationID: conversation.id,
-                    currentUserID: currentUser.id,
-                    modelContext: modelContext
-                )
-                
-                // If online, also update Firebase directly
+                // If online, upload immediately
                 if networkMonitor.isConnected {
             let db = Firestore.firestore()
             
@@ -965,6 +979,13 @@ struct ChatView: View {
                     .setData(messageData)
                 
                     print("   ✅ Message document created")
+                    
+                    // Update local message status to "sent"
+                    if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                        messages[index].statusRaw = "sent"
+                        try? modelContext.save()
+                        print("   ✅ Local message status updated to 'sent'")
+                    }
                     
                     // Get all participants except the sender
                     let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
@@ -1214,6 +1235,98 @@ struct ChatView: View {
             // Show error to user
             // TODO: Add error alert
         }
+    }
+    
+    // MARK: - Offline Message Sync
+    
+    private func syncPendingMessages() async {
+        guard networkMonitor.isConnected else {
+            print("⚠️ Cannot sync - still offline")
+            return
+        }
+        
+        guard let currentUser = authViewModel.currentUser else {
+            print("⚠️ Cannot sync - no current user")
+            return
+        }
+        
+        // Find all pending messages in this conversation
+        let pendingMessages = messages.filter { $0.status == .pending || $0.status == .failed }
+        
+        guard !pendingMessages.isEmpty else {
+            print("✅ No pending messages to sync")
+            return
+        }
+        
+        print("\n🔄 Syncing \(pendingMessages.count) pending message(s)...")
+        
+        let db = Firestore.firestore()
+        
+        for message in pendingMessages {
+            do {
+                print("   📤 Uploading message \(message.id.prefix(8))...")
+                
+                // Update status to sending
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].statusRaw = "sending"
+                    try? modelContext.save()
+                }
+                
+                // Prepare message data
+                var messageData = message.toDictionary()
+                messageData["timestamp"] = Timestamp(date: message.timestamp)
+                messageData["status"] = "sent"
+                messageData["senderName"] = currentUser.displayName
+                
+                // Upload to Firestore
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .setData(messageData)
+                
+                print("      ✅ Message uploaded")
+                
+                // Update local status to sent
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].statusRaw = "sent"
+                    messages[index].needsSync = false
+                    try? modelContext.save()
+                }
+                
+                // Update conversation metadata
+                let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+                
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .setData([
+                        "id": conversation.id,
+                        "participantIDs": conversation.participantIDs,
+                        "isGroup": conversation.isGroup,
+                        "name": conversation.name ?? "",
+                        "lastMessage": message.content,
+                        "lastMessageTime": Timestamp(date: message.timestamp),
+                        "lastSenderID": currentUser.id,
+                        "lastMessageID": message.id,
+                        "unreadBy": otherParticipants,
+                        "creatorID": conversation.creatorID ?? currentUser.id,
+                        "deletedBy": FieldValue.arrayRemove([currentUser.id])
+                    ], merge: true)
+                
+                print("      ✅ Conversation metadata updated")
+                
+            } catch {
+                print("      ❌ Failed to sync message: \(error.localizedDescription)")
+                
+                // Mark as failed
+                if let index = messages.firstIndex(where: { $0.id == message.id }) {
+                    messages[index].statusRaw = "failed"
+                    try? modelContext.save()
+                }
+            }
+        }
+        
+        print("✅ Sync complete!\n")
     }
     
     private func markMessagesAsRead() async {

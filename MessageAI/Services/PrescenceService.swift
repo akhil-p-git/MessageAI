@@ -1,5 +1,6 @@
 import Foundation
 import FirebaseFirestore
+import Combine
 
 @MainActor
 class PresenceService {
@@ -7,8 +8,29 @@ class PresenceService {
     
     private let db = Firestore.firestore()
     private var presenceTask: Task<Void, Never>?
+    private var networkCancellable: AnyCancellable?
+    private var currentUserID: String?
+    private var currentShowOnlineStatus: Bool = true
     
-    private init() {}
+    private init() {
+        // Monitor network connectivity
+        networkCancellable = NetworkMonitor.shared.$isConnected
+            .sink { [weak self] isConnected in
+                guard let self = self, let userID = self.currentUserID else { return }
+                
+                Task { @MainActor in
+                    if isConnected {
+                        print("🌐 Network restored - resuming presence updates")
+                        await self.startPresenceUpdates(userID: userID, showOnlineStatus: self.currentShowOnlineStatus)
+                    } else {
+                        print("📡 Network lost - stopping presence updates")
+                        self.presenceTask?.cancel()
+                        self.presenceTask = nil
+                        // Note: Can't update Firestore when offline, but Firebase will handle this
+                    }
+                }
+            }
+    }
     
     func setUserOnline(userID: String, isOnline: Bool, showOnlineStatus: Bool = true) async {
         do {
@@ -32,8 +54,18 @@ class PresenceService {
     }
     
     func startPresenceUpdates(userID: String, showOnlineStatus: Bool = true) {
+        // Store current user info for network monitoring
+        currentUserID = userID
+        currentShowOnlineStatus = showOnlineStatus
+        
         // Cancel existing task if any
         presenceTask?.cancel()
+        
+        // Only start if network is connected
+        guard NetworkMonitor.shared.isConnected else {
+            print("⚠️ Cannot start presence updates - offline")
+            return
+        }
         
         presenceTask = Task {
             while !Task.isCancelled {
@@ -48,6 +80,7 @@ class PresenceService {
     func stopPresenceUpdates(userID: String) {
         presenceTask?.cancel()
         presenceTask = nil
+        currentUserID = nil
         
         Task {
             await setUserOnline(userID: userID, isOnline: false)
