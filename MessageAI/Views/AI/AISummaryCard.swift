@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Combine
 
 struct AISummaryCard: View {
     @StateObject private var viewModel = SummaryViewModel()
