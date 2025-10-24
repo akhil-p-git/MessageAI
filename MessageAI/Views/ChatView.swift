@@ -33,6 +33,7 @@ struct ChatView: View {
     @StateObject private var syncService = MessageSyncService.shared
     @State private var showReadReceipts = false
     @State private var selectedMessageForReceipts: Message?
+    @State private var userDisplayNames: [String: String] = [:] // Cache user display names
     
     // Track optimistic updates with timestamps to prevent listener overwrites
     // Using static to persist across view recreations
@@ -361,6 +362,7 @@ struct ChatView: View {
                     message: message,
                     isCurrentUser: message.senderID == authViewModel.currentUser?.id,
                     isGroupChat: conversation.isGroup,
+                    replySenderName: message.replyToSenderID != nil ? getSenderDisplayName(for: message.replyToSenderID!) : nil,
                     onReply: {
                         Task {
                             await handleReply(to: message)
@@ -375,6 +377,14 @@ struct ChatView: View {
                     }
                 }
             )
+            .onAppear {
+                // Load reply sender name if needed
+                if let replySenderID = message.replyToSenderID {
+                    Task {
+                        await loadUserDisplayName(for: replySenderID)
+                    }
+                }
+            }
             }
     }
     
@@ -521,6 +531,29 @@ struct ChatView: View {
             await MainActor.run {
                 self.replyingToMessage = message
                 self.replyToSenderName = sender.displayName
+            }
+        }
+    }
+    
+    // MARK: - User Display Name Helpers
+    
+    private func getSenderDisplayName(for userID: String) -> String {
+        if userID == authViewModel.currentUser?.id {
+            return "You"
+        }
+        return userDisplayNames[userID] ?? "Loading..."
+    }
+    
+    private func loadUserDisplayName(for userID: String) async {
+        // Skip if already cached or is current user
+        guard userID != authViewModel.currentUser?.id,
+              userDisplayNames[userID] == nil else {
+            return
+        }
+        
+        if let user = try? await AuthService.shared.fetchUserDocument(userId: userID) {
+            await MainActor.run {
+                userDisplayNames[userID] = user.displayName
             }
         }
     }
@@ -956,7 +989,8 @@ struct ChatView: View {
                                 "lastSenderID": currentUser.id,
                                 "lastMessageID": message.id,
                                 "unreadBy": otherParticipants,
-                                "creatorID": conversation.creatorID ?? currentUser.id
+                                "creatorID": conversation.creatorID ?? currentUser.id,
+                                "deletedBy": FieldValue.arrayRemove([currentUser.id])  // Remove sender from deletedBy (conversation reappears)
                             ], merge: true)
                         
                         print("   ✅ Conversation metadata updated successfully!")
@@ -1051,7 +1085,8 @@ struct ChatView: View {
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
                         "unreadBy": otherParticipants,
-                        "creatorID": conversation.creatorID ?? currentUser.id
+                        "creatorID": conversation.creatorID ?? currentUser.id,
+                        "deletedBy": FieldValue.arrayRemove([currentUser.id])  // Remove sender from deletedBy
                     ], merge: true)
                 
                 print("   ✅ Conversation metadata updated for image!\n")
@@ -1155,7 +1190,8 @@ struct ChatView: View {
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
                         "unreadBy": otherParticipants,
-                        "creatorID": conversation.creatorID ?? currentUser.id
+                        "creatorID": conversation.creatorID ?? currentUser.id,
+                        "deletedBy": FieldValue.arrayRemove([currentUser.id])  // Remove sender from deletedBy
                     ], merge: true)
                 
                 print("   ✅ Conversation metadata updated!")
@@ -1311,6 +1347,7 @@ struct MessageBubble: View {
     let message: Message
     let isCurrentUser: Bool
     let isGroupChat: Bool
+    let replySenderName: String?  // Optional: display name of the person being replied to
     let onReply: () -> Void
     let onDelete: (Bool) -> Void  // Add delete callback
     @State private var showReadReceipts = false
@@ -1319,6 +1356,7 @@ struct MessageBubble: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
+        let _ = print("🔵 MessageBubble rendering for message: \(message.id.prefix(8))... isCurrentUser: \(isCurrentUser)")
         HStack {
             if isCurrentUser { Spacer() }
             
@@ -1333,10 +1371,10 @@ struct MessageBubble: View {
                         .cornerRadius(18)
                 } else {
                     if let replyContent = message.replyToContent,
-                       let replySenderID = message.replyToSenderID {
+                       let senderName = replySenderName {
                         ReplyBubbleView(
                             replyToContent: replyContent,
-                            replyToSenderName: replySenderID,
+                            replyToSenderName: senderName,
                             isCurrentUser: isCurrentUser
                         )
                         .padding(.horizontal, 4)

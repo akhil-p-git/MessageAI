@@ -7,6 +7,8 @@
 
 import Foundation
 import FirebaseFunctions
+import FirebaseFirestore
+import SwiftUI
 
 enum AIServiceError: LocalizedError {
     case invalidResponse
@@ -224,12 +226,12 @@ class AIService {
             let callable = self.functions.httpsCallable("summarizeThread")
             
             let result = try await callable.call([
-                "conversationId": conversationID,
-                "messageLimit": messageLimit
+            "conversationId": conversationID,
+            "messageLimit": messageLimit
             ])
             
             self.log("📥 Received response from summarizeThread", type: .response)
-            
+        
             if let data = result.data as? [String: Any] {
                 self.log("Response data: \(data)", type: .info)
             }
@@ -341,31 +343,83 @@ class AIService {
     
     // MARK: - Priority Detection
     
-    func detectPriority(messageID: String, conversationID: String) async throws -> PriorityResult {
-        let callable = functions.httpsCallable("detectPriority")
+    func detectPriority(messageText: String, conversationContext: String? = nil) async throws -> PriorityResult {
+        log("📤 Calling detectPriority", type: .request)
+        log("Message: \(messageText.prefix(50))...", type: .info)
         
-        do {
-            let result = try await callable.call([
-                "messageId": messageID,
-                "conversationId": conversationID
-            ])
+        return try await executeWithRetry(functionName: "detectPriority") {
+            let callable = self.functions.httpsCallable("detectPriority")
             
-            guard let data = result.data as? [String: Any],
-                  let isUrgent = data["isUrgent"] as? Bool,
-                  let score = data["urgencyScore"] as? Double else {
+            var params: [String: Any] = [
+                "messageText": messageText
+            ]
+            
+            if let context = conversationContext {
+                params["conversationContext"] = context
+            }
+            
+            let result = try await callable.call(params)
+            
+            self.log("📥 Received response from detectPriority", type: .response)
+            
+            guard let data = result.data as? [String: Any] else {
+                self.log("Failed to parse priority detection response", type: .error)
                 throw AIServiceError.parsingError
             }
             
-            let reason = data["reason"] as? String
+            self.log("Response data: \(data)", type: .info)
             
-            return PriorityResult(
+            let priority = data["priority"] as? String ?? "low"
+            let score = data["score"] as? Double ?? 0.0
+            let reason = data["reason"] as? String
+            let urgencyIndicators = data["urgencyIndicators"] as? [String] ?? []
+            
+            let isUrgent = priority == "high"
+            
+            let priorityResult = PriorityResult(
                 isUrgent: isUrgent,
                 urgencyScore: score,
-                reason: reason
+                reason: reason,
+                priority: priority,
+                urgencyIndicators: urgencyIndicators
             )
-        } catch {
-            throw AIServiceError.networkError(error)
+            
+            self.log("✅ Priority detected: \(priority) (score: \(score))", type: .success)
+            return priorityResult
         }
+    }
+    
+    // Convenience method for detecting priority of a specific message
+    func detectMessagePriority(conversationID: String, messageID: String) async throws -> PriorityResult {
+        log("📤 Fetching message for priority detection", type: .info)
+        
+        // Fetch the message
+        let messageDoc = try await Firestore.firestore()
+            .collection("conversations")
+            .document(conversationID)
+            .collection("messages")
+            .document(messageID)
+            .getDocument()
+        
+        guard let messageData = messageDoc.data(),
+              let messageText = messageData["text"] as? String else {
+            throw AIServiceError.parsingError
+        }
+        
+        // Get recent messages for context (last 5 messages)
+        let recentMessages = try await Firestore.firestore()
+            .collection("conversations")
+            .document(conversationID)
+            .collection("messages")
+            .order(by: "timestamp", descending: true)
+            .limit(to: 5)
+            .getDocuments()
+        
+        let contextMessages = recentMessages.documents
+            .compactMap { $0.data()["text"] as? String }
+            .joined(separator: "\n")
+        
+        return try await detectPriority(messageText: messageText, conversationContext: contextMessages)
     }
 }
 
@@ -375,5 +429,37 @@ struct PriorityResult: Codable {
     let isUrgent: Bool
     let urgencyScore: Double
     let reason: String?
+    let priority: String // "high", "medium", "low"
+    let urgencyIndicators: [String]
+    
+    init(isUrgent: Bool, urgencyScore: Double, reason: String?, priority: String = "low", urgencyIndicators: [String] = []) {
+        self.isUrgent = isUrgent
+        self.urgencyScore = urgencyScore
+        self.reason = reason
+        self.priority = priority
+        self.urgencyIndicators = urgencyIndicators
+    }
+    
+    var priorityColor: Color {
+        switch priority {
+        case "high":
+            return .red
+        case "medium":
+            return .orange
+        default:
+            return .gray
+        }
+    }
+    
+    var priorityIcon: String {
+        switch priority {
+        case "high":
+            return "exclamationmark.triangle.fill"
+        case "medium":
+            return "exclamationmark.circle.fill"
+        default:
+            return "circle.fill"
+        }
+    }
 }
 

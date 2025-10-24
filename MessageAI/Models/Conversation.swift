@@ -18,8 +18,9 @@ class Conversation: Identifiable {
     var lastMessageID: String?
     var unreadBy: [String] = []
     var creatorID: String?
+    var deletedBy: [String] = []  // Users who have deleted this conversation from their view
     
-    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, lastMessageID: String? = nil, unreadBy: [String] = [], creatorID: String? = nil) {
+    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, lastMessageID: String? = nil, unreadBy: [String] = [], creatorID: String? = nil, deletedBy: [String] = []) {
         self.id = id
         self.isGroup = isGroup
         self.participantIDs = participantIDs
@@ -30,6 +31,7 @@ class Conversation: Identifiable {
         self.lastMessageID = lastMessageID
         self.unreadBy = unreadBy
         self.creatorID = creatorID
+        self.deletedBy = deletedBy
     }
     
     func toDictionary() -> [String: Any] {
@@ -37,7 +39,8 @@ class Conversation: Identifiable {
             "id": id,
             "isGroup": isGroup,
             "participantIDs": participantIDs,
-            "unreadBy": unreadBy
+            "unreadBy": unreadBy,
+            "deletedBy": deletedBy
         ]
         
         if let name = name {
@@ -81,6 +84,7 @@ class Conversation: Identifiable {
         let lastMessageID = data["lastMessageID"] as? String
         let unreadBy = data["unreadBy"] as? [String] ?? []
         let creatorID = data["creatorID"] as? String
+        let deletedBy = data["deletedBy"] as? [String] ?? []
         
         return Conversation(
             id: id,
@@ -92,7 +96,8 @@ class Conversation: Identifiable {
             lastSenderID: lastSenderID,
             lastMessageID: lastMessageID,
             unreadBy: unreadBy,
-            creatorID: creatorID
+            creatorID: creatorID,
+            deletedBy: deletedBy
         )
     }
 }

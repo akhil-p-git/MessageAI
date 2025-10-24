@@ -53,6 +53,7 @@ struct AIFeaturesView: View {
         case actionItems = "Tasks"
         case search = "Search"
         case decisions = "Decisions"
+        case priority = "Priority"
         
         var icon: String {
             switch self {
@@ -60,6 +61,7 @@ struct AIFeaturesView: View {
             case .actionItems: return "checkmark.circle"
             case .search: return "magnifyingglass"
             case .decisions: return "checkmark.seal"
+            case .priority: return "exclamationmark.triangle.fill"
             }
         }
     }
@@ -209,6 +211,10 @@ struct AIFeaturesView: View {
                     
                 case .decisions:
                     DecisionsContainerView(conversationID: conversationID)
+                        .padding(.top)
+                    
+                case .priority:
+                    PriorityDetectionView(conversationID: conversationID)
                         .padding(.top)
                 }
             }

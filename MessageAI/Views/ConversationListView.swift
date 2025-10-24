@@ -150,6 +150,12 @@ struct ConversationListView: View {
                     }
                     
                     if let conversation = Conversation.fromDictionary(data) {
+                        // Filter out conversations that the current user has deleted
+                        if conversation.deletedBy.contains(currentUser.id) {
+                            print("   🚫 Skipping conversation \(conversation.id.prefix(8))... (deleted by current user)")
+                            continue
+                        }
+                        
                         newConversations.append(conversation)
                         
                         // Debug first conversation
@@ -182,9 +188,9 @@ struct ConversationListView: View {
             for participantID in conversation.participantIDs {
                 // Always refresh user data (not just if nil)
                 // This ensures profile picture updates are reflected
-                if let user = try? await AuthService.shared.fetchUserDocument(userId: participantID) {
-                    await MainActor.run {
-                        userCache[participantID] = user
+                    if let user = try? await AuthService.shared.fetchUserDocument(userId: participantID) {
+                        await MainActor.run {
+                            userCache[participantID] = user
                     }
                 }
             }
@@ -192,7 +198,49 @@ struct ConversationListView: View {
     }
     
     private func deleteConversation(at offsets: IndexSet) {
-        // TODO: Implement conversation deletion
+        print("🗑️ ConversationListView: Soft deleting conversations at offsets: \(offsets)")
+        
+        guard let currentUser = authViewModel.currentUser else {
+            print("❌ No current user")
+            return
+        }
+        
+        let db = Firestore.firestore()
+        
+        for index in offsets {
+            guard index < conversations.count else {
+                print("❌ Index \(index) out of bounds (conversations count: \(conversations.count))")
+                continue
+            }
+            
+            let conversation = conversations[index]
+            print("   Soft deleting conversation: \(conversation.id.prefix(8))...")
+            print("   Name: \(conversation.name ?? "1-on-1 chat")")
+            print("   This will only remove it from YOUR view, not for other participants")
+            
+            Task {
+                do {
+                    // Add current user to deletedBy array (soft delete)
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .updateData([
+                            "deletedBy": FieldValue.arrayUnion([currentUser.id])
+                        ])
+                    
+                    print("✅ Conversation \(conversation.id.prefix(8))... soft deleted (added to deletedBy)")
+                    
+                    // Remove from local array immediately for instant UI update
+                    await MainActor.run {
+                        if let localIndex = self.conversations.firstIndex(where: { $0.id == conversation.id }) {
+                            self.conversations.remove(at: localIndex)
+                            print("✅ Conversation removed from local array")
+                        }
+                    }
+                } catch {
+                    print("❌ Error deleting conversation: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     private func startListeningForNewMessages() {
@@ -240,27 +288,34 @@ struct ConversationListView: View {
                         // Check if this is actually a NEW message (not just typing indicator update)
                         let previousMessageID = self.lastNotifiedMessageIDs[conversationID]
                         
-                        // Only show notification if:
-                        // 1. Message ID is different (new message, not typing update)
-                        // 2. Message is from someone else
-                        // 3. Not in that specific chat (handled by NotificationManager)
-                        if lastMessageID != previousMessageID && lastSenderID != currentUser.id {
-                            // Update tracked message ID
+                        // Check if this is a new message
+                        let isNewMessage = lastMessageID != previousMessageID
+                        let isFromOtherUser = lastSenderID != currentUser.id
+                        
+                        if isNewMessage {
+                            // ALWAYS update tracked message ID when we see a new message
+                            // This prevents duplicate notifications even if the user was in the chat
                             self.lastNotifiedMessageIDs[conversationID] = lastMessageID
                             
-                            // Get sender name from user cache
-                            let senderName = self.userCache[lastSenderID]?.displayName ?? "Someone"
-                            
-                            print("🔔 New message detected (ID: \(lastMessageID.prefix(8))...): '\(messageContent)' from \(senderName)")
-                            
-                            NotificationManager.shared.showNotification(
-                                title: senderName,
-                                body: messageContent,
-                                conversationID: conversationID,
-                                senderID: lastSenderID,
-                                currentUserID: currentUser.id
-                            )
-                        } else if lastMessageID == previousMessageID {
+                            // Only show notification if message is from someone else
+                            if isFromOtherUser {
+                                // Get sender name from user cache
+                                let senderName = self.userCache[lastSenderID]?.displayName ?? "Someone"
+                                
+                                print("🔔 New message detected (ID: \(lastMessageID.prefix(8))...): '\(messageContent)' from \(senderName)")
+                                
+                                // NotificationManager will check if user is in active chat and suppress if needed
+                                NotificationManager.shared.showNotification(
+                                    title: senderName,
+                                    body: messageContent,
+                                    conversationID: conversationID,
+                                    senderID: lastSenderID,
+                                    currentUserID: currentUser.id
+                                )
+                            } else {
+                                print("🔕 Skipping notification - message from current user")
+                            }
+                        } else {
                             print("🔕 Skipping notification - same message ID (likely typing indicator update)")
                         }
                     }
