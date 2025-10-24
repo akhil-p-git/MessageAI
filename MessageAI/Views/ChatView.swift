@@ -933,17 +933,35 @@ struct ChatView: View {
     }
     
     private func sendVoiceMessage(audioURL: URL) async {
-        guard let currentUser = authViewModel.currentUser else { return }
+        guard let currentUser = authViewModel.currentUser else {
+            print("❌ Voice message: No current user")
+            return
+        }
+        
+        print("\n🎤 Starting voice message send...")
+        print("   Audio URL: \(audioURL)")
         
         do {
+            // Read the audio file
+            print("   📖 Reading audio file...")
             let data = try Data(contentsOf: audioURL)
+            print("   ✅ Audio file read successfully (\(data.count) bytes)")
+            
+            // Upload to Firebase Storage
             let filename = "\(UUID().uuidString).m4a"
             let path = "conversations/\(conversation.id)/voice/\(filename)"
             let storageRef = Storage.storage().reference().child(path)
             
-            let _ = try await storageRef.putDataAsync(data)
-            let downloadURL = try await storageRef.downloadURL()
+            print("   ☁️ Uploading to Firebase Storage...")
+            print("      Path: \(path)")
             
+            let _ = try await storageRef.putDataAsync(data)
+            print("   ✅ Upload complete!")
+            
+            let downloadURL = try await storageRef.downloadURL()
+            print("   ✅ Download URL obtained: \(downloadURL.absoluteString)")
+            
+            // Create message
             let message = Message(
                 id: UUID().uuidString,
                 conversationID: conversation.id,
@@ -960,9 +978,10 @@ struct ChatView: View {
             messageData["timestamp"] = Timestamp(date: message.timestamp)
             messageData["status"] = "sent"
             messageData["type"] = "voice"
+            messageData["senderName"] = currentUser.displayName ?? "Unknown"
             
-            print("\n📤 Uploading voice message to Firebase...")
-            print("   Message ID: \(message.id)")
+            print("   📝 Creating Firestore message document...")
+            print("      Message ID: \(message.id)")
             
             try await db.collection("conversations")
                 .document(conversation.id)
@@ -975,7 +994,7 @@ struct ChatView: View {
             // Get all participants except the sender
             let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
             
-            print("   📝 Updating conversation metadata for voice...")
+            print("   📝 Updating conversation metadata...")
             print("      Conversation ID: \(conversation.id)")
             
             // Use setData with merge to create document if it doesn't exist
@@ -990,15 +1009,25 @@ struct ChatView: View {
                         "unreadBy": otherParticipants
                     ], merge: true)
                 
-                print("   ✅ Conversation metadata updated for voice!")
-                print("✅ Voice message sent\n")
+                print("   ✅ Conversation metadata updated!")
+                print("✅ Voice message sent successfully!\n")
             } catch {
-                print("   ❌ CRITICAL ERROR updating conversation for voice!")
+                print("   ⚠️ Warning: Conversation metadata update failed")
                 print("      Error: \(error.localizedDescription)")
                 // Don't throw - message was created successfully
             }
+            
+            // Clean up the local audio file
+            try? FileManager.default.removeItem(at: audioURL)
+            print("   🗑️ Cleaned up local audio file")
+            
         } catch {
-            print("❌ Error sending voice message: \(error)")
+            print("❌ ERROR sending voice message!")
+            print("   Error: \(error.localizedDescription)")
+            print("   Full error: \(error)")
+            
+            // Show error to user
+            // TODO: Add error alert
         }
     }
     
