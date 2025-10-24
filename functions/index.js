@@ -2,12 +2,23 @@ const functions = require('firebase-functions');
 const admin = require('firebase-admin');
 const { OpenAI } = require('openai');
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 admin.initializeApp();
 
 // Helper function to get OpenAI client
 function getOpenAI() {
+  // Try environment variable first, then fall back to functions.config()
+  const apiKey = process.env.OPENAI_API_KEY || (functions.config().openai && functions.config().openai.key);
+  
+  if (!apiKey) {
+    console.error('❌ OpenAI API key not found! Set OPENAI_API_KEY environment variable.');
+    throw new Error('OpenAI API key not configured');
+  }
+  
   return new OpenAI({
-    apiKey: functions.config().openai.key
+    apiKey: apiKey
   });
 }
 

@@ -66,45 +66,62 @@ struct NewChatView: View {
     }
     
     private func startChat() async {
-        guard let currentUser = authViewModel.currentUser else { return }
+        guard let currentUser = authViewModel.currentUser else {
+            print("❌ NewChatView: No current user")
+            return
+        }
         
+        print("\n🚀 NewChatView: Starting chat with \(email)")
         isSearching = true
         errorMessage = nil
         
         do {
+            print("📧 NewChatView: Looking up user by email...")
             let otherUser = try await AuthService.shared.findUserByEmail(email: email.lowercased())
             
             guard let otherUser = otherUser else {
+                print("❌ NewChatView: User not found")
                 errorMessage = "User not found with email: \(email)"
                 showError = true
                 isSearching = false
                 return
             }
             
+            print("✅ NewChatView: Found user \(otherUser.displayName)")
+            
             if otherUser.id == currentUser.id {
+                print("❌ NewChatView: Cannot chat with yourself")
                 errorMessage = "You cannot start a chat with yourself"
                 showError = true
                 isSearching = false
                 return
             }
             
+            print("🔍 NewChatView: Finding or creating conversation...")
             let conversation = try await ConversationService.shared.findOrCreateConversation(
                 currentUserID: currentUser.id,
                 otherUserID: otherUser.id,
                 modelContext: modelContext
             )
             
+            print("✅ NewChatView: Got conversation \(conversation.id)")
+            
             await MainActor.run {
+                print("🎯 NewChatView: Setting up navigation...")
                 self.createdConversation = conversation
                 self.navigateToChat = true
+                print("🚪 NewChatView: Dismissing...")
                 dismiss()
+                print("✅ NewChatView: Complete!")
             }
         } catch {
+            print("❌ NewChatView: Error - \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             showError = true
         }
         
         isSearching = false
+        print("🏁 NewChatView: Finished startChat()")
     }
 }
 

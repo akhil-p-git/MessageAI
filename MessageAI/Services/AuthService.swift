@@ -73,16 +73,22 @@ class AuthService {
     }
     
     func findUserByEmail(email: String) async throws -> User? {
+        print("🔍 AuthService: Searching for user with email: \(email)")
+        
         let snapshot = try await db.collection("users")
             .whereField("email", isEqualTo: email.lowercased())
             .limit(to: 1)
             .getDocuments()
         
+        print("📊 AuthService: Found \(snapshot.documents.count) documents")
+        
         guard let document = snapshot.documents.first,
               let user = User.fromDictionary(document.data()) else {
+            print("❌ AuthService: No user found or failed to parse")
             return nil
         }
         
+        print("✅ AuthService: Found user: \(user.displayName)")
         return user
     }
     
