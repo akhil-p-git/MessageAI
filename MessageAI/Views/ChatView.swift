@@ -26,6 +26,7 @@ struct ChatView: View {
     @State private var showSearchMessages = false
     @State private var otherUser: User?
     @State private var showBlockReport = false
+    @State private var showAIPanel = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -83,7 +84,23 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                toolbarMenu
+                HStack(spacing: 12) {
+                    // AI Features Button
+                    Button {
+                        showAIPanel = true
+                    } label: {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.blue, .purple, .pink],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
+                    
+                    toolbarMenu
+                }
             }
         }
         .sheet(isPresented: $showImagePicker) {
@@ -126,6 +143,9 @@ struct ChatView: View {
             if let user = otherUser {
                 BlockReportView(user: user)
             }
+        }
+        .sheet(isPresented: $showAIPanel) {
+            AIFeaturesView(conversationID: conversation.id)
         }
         .onChange(of: selectedImage) { _, newImage in
             if newImage != nil {

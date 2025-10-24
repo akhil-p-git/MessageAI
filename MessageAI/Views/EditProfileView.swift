@@ -15,6 +15,18 @@ struct EditProfileView: View {
     @State private var showSuccess = false
     
     var body: some View {
+        Button("Test AI") {
+            Task {
+                do {
+                    let summary = try await AIService.shared.summarizeThread(
+                        conversationID: "test-id"
+                    )
+                    print("✅ AI Works! Summary: \(summary.points)")
+                } catch {
+                    print("❌ Error: \(error)")
+                }
+            }
+        }
         Form {
             Section("Profile Picture") {
                 VStack(spacing: 16) {
