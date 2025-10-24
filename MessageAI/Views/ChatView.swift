@@ -12,6 +12,8 @@ struct ChatView: View {
     @State private var messageText = ""
     @State private var messages: [Message] = []
     @State private var listener: ListenerRegistration?
+    @State private var typingListener: ListenerRegistration?
+    @State private var presenceListener: ListenerRegistration?
     @State private var isLoading = true
     @State private var isOtherUserTyping = false
     @State private var typingUserNames: [String] = []
@@ -182,8 +184,12 @@ struct ChatView: View {
             }
         }
         .onAppear {
+            // Track that we're viewing this chat (for notifications)
+            NotificationManager.shared.enterChat(conversation.id)
+            
             InAppNotificationService.shared.activeConversationID = conversation.id
             startListening()
+            setupPresenceListener()
             
             if !conversation.isGroup {
                 Task {
@@ -211,14 +217,25 @@ struct ChatView: View {
             #endif
         }
         .onDisappear {
+            print("👋 ChatView: Cleaning up listeners...")
+            
+            // Track that we left this chat (for notifications)
+            NotificationManager.shared.exitChat()
+            
             if let currentUser = authViewModel.currentUser {
                 TypingIndicatorService.shared.clearAllTyping(
                     conversationID: conversation.id,
                     userID: currentUser.id
                 )
             }
+            
             listener?.remove()
+            typingListener?.remove()
+            presenceListener?.remove()
+            
             InAppNotificationService.shared.activeConversationID = nil
+            
+            print("✅ ChatView: Listeners removed\n")
         }
     }
     
@@ -241,8 +258,17 @@ struct ChatView: View {
     private var userInfoBar: some View {
         HStack(spacing: 8) {
             if let user = otherUser {
-                OnlineStatusIndicator(isOnline: user.isOnline, size: 8)
-                LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
+                // Only show online status if user allows it
+                if user.showOnlineStatus {
+                    OnlineStatusIndicator(
+                        isOnline: user.isOnline,
+                        size: 8
+                    )
+                }
+                // Only show last seen if user allows it
+                if user.showOnlineStatus {
+                    LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
+                }
             }
             Spacer()
         }
@@ -499,7 +525,12 @@ struct ChatView: View {
     }
     
     private func startListening() {
+        print("\n👂 ChatView: Setting up message listener for conversation \(conversation.id.prefix(8))...")
+        
         let db = Firestore.firestore()
+        
+        // Remove old listener if exists
+        listener?.remove()
         
         listener = db.collection("conversations")
             .document(conversation.id)
@@ -507,15 +538,19 @@ struct ChatView: View {
             .order(by: "timestamp", descending: false)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
-                    print("❌ Error listening to messages: \(error)")
+                    print("❌ ChatView: Message listener error: \(error)")
                     self.isLoading = false
                     return
                 }
                 
                 guard let snapshot = snapshot else {
+                    print("⚠️ ChatView: No snapshot")
                     self.isLoading = false
                     return
                 }
+                
+                print("📨 ChatView: Received snapshot with \(snapshot.documents.count) messages")
+                print("   Document changes: \(snapshot.documentChanges.count)")
                 
                 // Handle document changes to update existing messages efficiently
                 for change in snapshot.documentChanges {
@@ -527,6 +562,7 @@ struct ChatView: View {
                     }
                     
                     guard let updatedMessage = Message.fromDictionary(data) else {
+                        print("   ⚠️ Failed to parse message from change")
                         continue
                     }
                     
@@ -535,11 +571,25 @@ struct ChatView: View {
                         // Check if message already exists (to avoid duplicates)
                         if !self.messages.contains(where: { $0.id == updatedMessage.id }) {
                             self.messages.append(updatedMessage)
-                            print("📨 Added message: \(updatedMessage.id)")
+                            print("   ➕ Added message: '\(updatedMessage.content)' from \(updatedMessage.senderID.prefix(8))...")
                             
                             // Save to SwiftData
                             self.modelContext.insert(updatedMessage)
                             try? self.modelContext.save()
+                            
+                            // Trigger notification for messages from others
+                            if let currentUser = self.authViewModel.currentUser,
+                               updatedMessage.senderID != currentUser.id {
+                                let senderName = data["senderName"] as? String ?? "Someone"
+                                
+                                NotificationManager.shared.showNotification(
+                                    title: senderName,
+                                    body: updatedMessage.content,
+                                    conversationID: self.conversation.id,
+                                    senderID: updatedMessage.senderID,
+                                    currentUserID: currentUser.id
+                                )
+                            }
                         }
                         
                     case .modified:
@@ -553,7 +603,7 @@ struct ChatView: View {
                             existingMessage.reactions = updatedMessage.reactions
                             existingMessage.mediaURL = updatedMessage.mediaURL
                             
-                            print("📝 Updated message \(updatedMessage.id) - readBy: \(updatedMessage.readBy), status: \(updatedMessage.statusRaw)")
+                            print("   ✏️ Modified message: '\(updatedMessage.content)' - readBy: \(updatedMessage.readBy.count) users")
                             
                             // Save to SwiftData
                             try? self.modelContext.save()
@@ -564,7 +614,7 @@ struct ChatView: View {
                         
                     case .removed:
                         self.messages.removeAll(where: { $0.id == updatedMessage.id })
-                        print("🗑️ Removed message: \(updatedMessage.id)")
+                        print("   🗑️ Removed message: \(updatedMessage.id)")
                     }
                 }
                 
@@ -573,6 +623,8 @@ struct ChatView: View {
                 
                 self.isLoading = false
                 
+                print("   ✅ Total messages in chat: \(self.messages.count)\n")
+                
                 // Mark messages as read after a short delay
                 Task {
                     try? await Task.sleep(nanoseconds: 300_000_000)
@@ -580,15 +632,27 @@ struct ChatView: View {
                 }
             }
         
+        print("✅ ChatView: Message listener active")
+        
         listenForTypingIndicators()
     }
     
     private func listenForTypingIndicators() {
+        print("👂 ChatView: Setting up typing indicator listener...")
+        
         let db = Firestore.firestore()
         
-        db.collection("conversations")
+        // Remove old listener if exists
+        typingListener?.remove()
+        
+        typingListener = db.collection("conversations")
             .document(conversation.id)
             .addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("❌ ChatView: Typing listener error: \(error.localizedDescription)")
+                    return
+                }
+                
                 guard let data = snapshot?.data(),
                       let currentUserID = self.authViewModel.currentUser?.id else {
                     return
@@ -597,7 +661,12 @@ struct ChatView: View {
                 let typingUsers = data["typingUsers"] as? [String] ?? []
                 let otherTypingUsers = typingUsers.filter { $0 != currentUserID }
                 
+                let wasTyping = self.isOtherUserTyping
                 self.isOtherUserTyping = !otherTypingUsers.isEmpty
+                
+                if self.isOtherUserTyping != wasTyping {
+                    print("⌨️  ChatView: Typing indicator changed - \(otherTypingUsers.count) users typing")
+                }
                 
                 if !otherTypingUsers.isEmpty {
                     Task {
@@ -615,6 +684,53 @@ struct ChatView: View {
                     self.typingUserNames = []
                 }
             }
+        
+        print("✅ ChatView: Typing indicator listener active\n")
+    }
+    
+    private func setupPresenceListener() {
+        // Only for 1-on-1 chats
+        guard !conversation.isGroup,
+              let currentUser = authViewModel.currentUser,
+              let otherUserID = conversation.participantIDs.first(where: { $0 != currentUser.id }) else {
+            return
+        }
+        
+        print("👂 ChatView: Setting up presence listener for user: \(otherUserID.prefix(8))...")
+        
+        let db = Firestore.firestore()
+        
+        // Remove old listener if exists
+        presenceListener?.remove()
+        
+        presenceListener = db.collection("users")
+            .document(otherUserID)
+            .addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("❌ ChatView: Presence listener error: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let data = snapshot?.data() else {
+                    return
+                }
+                
+                let isOnline = data["isOnline"] as? Bool ?? false
+                let showOnlineStatus = data["showOnlineStatus"] as? Bool ?? true
+                
+                print("🔄 ChatView: Presence updated - isOnline=\(isOnline), showStatus=\(showOnlineStatus)")
+                
+                // Update the otherUser object
+                if let otherUser = self.otherUser {
+                    otherUser.isOnline = isOnline
+                    otherUser.showOnlineStatus = showOnlineStatus
+                    
+                    // Force UI update by creating a new reference
+                    self.otherUser = otherUser
+                }
+            }
+        
+        print("✅ ChatView: Presence listener active\n")
     }
     
     private func sendMessage() {
@@ -693,15 +809,16 @@ struct ChatView: View {
                     print("      Participants: \(conversation.participantIDs)")
                     print("      Other participants (unreadBy): \(otherParticipants)")
                     
+                    // Use setData with merge to create document if it doesn't exist
                     try await db.collection("conversations")
                         .document(conversation.id)
-                        .updateData([
+                        .setData([
                             "lastMessage": content,
                             "lastMessageTime": Timestamp(date: Date()),
                             "lastSenderID": currentUser.id,
                             "lastMessageID": message.id,
                             "unreadBy": otherParticipants
-                        ])
+                        ], merge: true)
                     
                     print("   ✅ Conversation metadata updated successfully!")
                     print("      lastMessage: \(content)")
@@ -769,15 +886,16 @@ struct ChatView: View {
             
             print("   📝 Updating conversation metadata for image...")
             
+            // Use setData with merge to create document if it doesn't exist
             try await db.collection("conversations")
                 .document(conversation.id)
-                .updateData([
+                .setData([
                     "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
                     "lastMessageTime": Timestamp(date: Date()),
                     "lastSenderID": currentUser.id,
                     "lastMessageID": message.id,
                     "unreadBy": otherParticipants
-                ])
+                ], merge: true)
             
             print("   ✅ Conversation metadata updated for image!\n")
             
@@ -840,15 +958,16 @@ struct ChatView: View {
             
             print("   📝 Updating conversation metadata for voice...")
             
+            // Use setData with merge to create document if it doesn't exist
             try await db.collection("conversations")
                 .document(conversation.id)
-                .updateData([
+                .setData([
                     "lastMessage": "🎤 Voice message",
                     "lastMessageTime": Timestamp(date: Date()),
                     "lastSenderID": currentUser.id,
                     "lastMessageID": message.id,
                     "unreadBy": otherParticipants
-                ])
+                ], merge: true)
             
             print("   ✅ Conversation metadata updated for voice!")
             print("✅ Voice message sent\n")

@@ -9,6 +9,7 @@ import SwiftUI
 
 struct RootView: View {
     @StateObject private var authViewModel = AuthViewModel()
+    @EnvironmentObject var themeManager: ThemeManager
     
     var body: some View {
         Group {
@@ -23,6 +24,7 @@ struct RootView: View {
             }
         }
         .onAppear {
+            print("📱 RootView appeared with theme: \(themeManager.selectedTheme.rawValue)")
             Task {
                 await authViewModel.checkAuthState()
             }
@@ -36,6 +38,7 @@ struct RootView: View {
 struct RootView_Previews: PreviewProvider {
     static var previews: some View {
         RootView()
+            .environmentObject(ThemeManager())
     }
 }
 #endif

@@ -20,7 +20,10 @@ struct MainTabView: View {
         }
         .onAppear {
             if let currentUser = authViewModel.currentUser {
-                PresenceService.shared.startPresenceUpdates(userID: currentUser.id)
+                PresenceService.shared.startPresenceUpdates(
+                    userID: currentUser.id,
+                    showOnlineStatus: currentUser.showOnlineStatus
+                )
                 InAppNotificationService.shared.startListening(userID: currentUser.id)
             }
         }

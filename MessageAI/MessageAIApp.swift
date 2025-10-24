@@ -2,18 +2,25 @@ import SwiftUI
 import SwiftData
 import FirebaseCore
 import FirebaseFunctions
+import UserNotifications
 
 @main
 struct MessageAIApp: App {
+    @StateObject private var themeManager = ThemeManager()
     
     init() {
         FirebaseApp.configure()
         verifyFirebaseConfiguration()
+        
+        // Set notification delegate
+        UNUserNotificationCenter.current().delegate = NotificationManager.shared
     }
     
     var body: some Scene {
         WindowGroup {
             RootView()
+                .environmentObject(themeManager)
+                .preferredColorScheme(themeManager.currentColorScheme)
                 .onAppear {
                     #if DEBUG
                     // Run diagnostics after a short delay to ensure UI is loaded
@@ -21,6 +28,9 @@ struct MessageAIApp: App {
                         DiagnosticHelper.runDiagnostics()
                     }
                     #endif
+                }
+                .task {
+                    await NotificationManager.shared.setup()
                 }
         }
         .modelContainer(for: [User.self, Conversation.self, Message.self])

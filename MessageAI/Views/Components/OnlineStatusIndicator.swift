@@ -10,13 +10,15 @@ struct OnlineStatusIndicator: View {
     }
     
     var body: some View {
-        Circle()
-            .fill(isOnline ? Color.green : Color.gray)
-            .frame(width: size, height: size)
-            .overlay(
-                Circle()
-                    .stroke(Color.white, lineWidth: 2)
-            )
+        if isOnline {
+            Circle()
+                .fill(Color.green)
+                .frame(width: size, height: size)
+                .overlay(
+                    Circle()
+                        .stroke(Color.white, lineWidth: 2)
+                )
+        }
     }
 }
 

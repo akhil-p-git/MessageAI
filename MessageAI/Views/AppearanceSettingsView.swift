@@ -1,21 +1,55 @@
 import SwiftUI
 
 struct AppearanceSettingsView: View {
-    @AppStorage("selectedTheme") private var selectedTheme = "System"
-    
-    private let themes = ["Light", "Dark", "System"]
+    @EnvironmentObject var themeManager: ThemeManager
+    @Environment(\.colorScheme) var currentColorScheme
     
     var body: some View {
         List {
-            Section {
-                Picker("Theme", selection: $selectedTheme) {
-                    ForEach(themes, id: \.self) { theme in
-                        Text(theme).tag(theme)
+            Section(header: Text("Theme")) {
+                ForEach(AppTheme.allCases, id: \.self) { theme in
+                    Button {
+                        print("🎨 User tapped: \(theme.rawValue)")
+                        withAnimation {
+                            themeManager.setTheme(theme)
+                        }
+                    } label: {
+                        HStack {
+                            Text(theme.rawValue)
+                                .foregroundColor(.primary)
+                            
+                            Spacer()
+                            
+                            if themeManager.selectedTheme == theme {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.blue)
+                            }
+                        }
                     }
+                    .contentShape(Rectangle())
                 }
-                .pickerStyle(.inline)
-            } footer: {
-                Text("Choose how MessageAI looks")
+            }
+            
+            Section(header: Text("Current Status")) {
+                HStack {
+                    Text("Selected Theme:")
+                    Spacer()
+                    Text(themeManager.selectedTheme.rawValue)
+                        .foregroundColor(.secondary)
+                }
+                
+                HStack {
+                    Text("Current Appearance:")
+                    Spacer()
+                    Text(currentColorScheme == .dark ? "Dark" : "Light")
+                        .foregroundColor(.secondary)
+                }
+            }
+            
+            Section {
+                Text("Choose how MessageAI looks. The System option will automatically match your device's appearance settings.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
         .navigationTitle("Appearance")
@@ -26,5 +60,6 @@ struct AppearanceSettingsView: View {
 #Preview {
     NavigationStack {
         AppearanceSettingsView()
+            .environmentObject(ThemeManager())
     }
 }

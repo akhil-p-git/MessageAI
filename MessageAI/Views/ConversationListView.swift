@@ -179,6 +179,12 @@ struct ConversationRow: View {
     let userCache: [String: User]
     @EnvironmentObject var authViewModel: AuthViewModel
     
+    @State private var typingUsers: [String] = []
+    @State private var typingListener: ListenerRegistration?
+    @State private var presenceListener: ListenerRegistration?
+    @State private var otherUserOnline: Bool = false
+    @State private var otherUserShowStatus: Bool = true
+    
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
@@ -201,8 +207,14 @@ struct ConversationRow: View {
                             fallbackText: otherUser.displayName
                         )
                         
-                        OnlineStatusIndicator(isOnline: otherUser.isOnline, size: 14)
+                        // Show online status using real-time state
+                        if otherUserShowStatus && otherUserOnline {
+                            OnlineStatusIndicator(
+                                isOnline: true,
+                                size: 14
+                            )
                             .offset(x: -2, y: -2)
+                        }
                     } else {
                         Circle()
                             .fill(Color.gray)
@@ -227,10 +239,30 @@ struct ConversationRow: View {
                 }
                 
                 HStack {
-                    Text(conversation.lastMessage ?? "No messages yet")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                    // Show typing indicator if someone is typing
+                    if !typingUsers.isEmpty {
+                        HStack(spacing: 4) {
+                            Text("typing")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                                .italic()
+                            
+                            // Animated dots
+                            HStack(spacing: 2) {
+                                ForEach(0..<3) { _ in
+                                    Circle()
+                                        .fill(Color.secondary)
+                                        .frame(width: 4, height: 4)
+                                }
+                            }
+                        }
+                    } else {
+                        // Show last message
+                        Text(conversation.lastMessage ?? "No messages yet")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
                     
                     Spacer()
                     
@@ -243,6 +275,14 @@ struct ConversationRow: View {
             }
         }
         .padding(.vertical, 4)
+        .onAppear {
+            startListeningForTyping()
+            startListeningForPresence()
+        }
+        .onDisappear {
+            typingListener?.remove()
+            presenceListener?.remove()
+        }
     }
     
     private func getConversationName() -> String {
@@ -255,6 +295,54 @@ struct ConversationRow: View {
             }
             return "Unknown"
         }
+    }
+    
+    private func startListeningForTyping() {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        let db = Firestore.firestore()
+        
+        typingListener = db.collection("conversations")
+            .document(conversation.id)
+            .addSnapshotListener { snapshot, error in
+                guard let data = snapshot?.data() else { return }
+                
+                let typingUserIDs = data["typingUsers"] as? [String] ?? []
+                
+                // Filter out current user
+                let otherTypingUsers = typingUserIDs.filter { $0 != currentUser.id }
+                
+                self.typingUsers = otherTypingUsers
+                
+                if !otherTypingUsers.isEmpty {
+                    print("⌨️  ConversationRow: \(otherTypingUsers.count) users typing in \(conversation.id.prefix(8))...")
+                }
+            }
+    }
+    
+    private func startListeningForPresence() {
+        guard let currentUser = authViewModel.currentUser,
+              !conversation.isGroup,
+              let otherUserID = conversation.participantIDs.first(where: { $0 != currentUser.id }) else {
+            return
+        }
+        
+        let db = Firestore.firestore()
+        
+        presenceListener = db.collection("users")
+            .document(otherUserID)
+            .addSnapshotListener { snapshot, error in
+                guard let data = snapshot?.data() else {
+                    return
+                }
+                
+                let isOnline = data["isOnline"] as? Bool ?? false
+                let showOnlineStatus = data["showOnlineStatus"] as? Bool ?? true
+                
+                // Update state variables for real-time UI updates
+                self.otherUserOnline = isOnline
+                self.otherUserShowStatus = showOnlineStatus
+            }
     }
     
     private func hasUnreadMessages() -> Bool {

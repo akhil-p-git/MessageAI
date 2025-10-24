@@ -15,8 +15,9 @@ class User: Identifiable, Codable {
     var isOnline: Bool
     var lastSeen: Date?
     var blockedUsers: [String]
+    var showOnlineStatus: Bool
     
-    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, isOnline: Bool = false, lastSeen: Date? = nil, blockedUsers: [String] = []) {
+    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, isOnline: Bool = false, lastSeen: Date? = nil, blockedUsers: [String] = [], showOnlineStatus: Bool = true) {
         self.id = id
         self.email = email
         self.displayName = displayName
@@ -24,6 +25,7 @@ class User: Identifiable, Codable {
         self.isOnline = isOnline
         self.lastSeen = lastSeen
         self.blockedUsers = blockedUsers
+        self.showOnlineStatus = showOnlineStatus
     }
     
     func toDictionary() -> [String: Any] {
@@ -32,7 +34,8 @@ class User: Identifiable, Codable {
             "email": email,
             "displayName": displayName,
             "isOnline": isOnline,
-            "blockedUsers": blockedUsers
+            "blockedUsers": blockedUsers,
+            "showOnlineStatus": showOnlineStatus
         ]
         
         if let profilePictureURL = profilePictureURL {
@@ -57,6 +60,7 @@ class User: Identifiable, Codable {
         let isOnline = data["isOnline"] as? Bool ?? false
         let lastSeen = data["lastSeen"] as? Date
         let blockedUsers = data["blockedUsers"] as? [String] ?? []
+        let showOnlineStatus = data["showOnlineStatus"] as? Bool ?? true
         
         return User(
             id: id,
@@ -65,12 +69,13 @@ class User: Identifiable, Codable {
             profilePictureURL: profilePictureURL,
             isOnline: isOnline,
             lastSeen: lastSeen,
-            blockedUsers: blockedUsers
+            blockedUsers: blockedUsers,
+            showOnlineStatus: showOnlineStatus
         )
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, email, displayName, profilePictureURL, isOnline, lastSeen, blockedUsers
+        case id, email, displayName, profilePictureURL, isOnline, lastSeen, blockedUsers, showOnlineStatus
     }
     
     required init(from decoder: Decoder) throws {
@@ -82,6 +87,7 @@ class User: Identifiable, Codable {
         isOnline = try container.decodeIfPresent(Bool.self, forKey: .isOnline) ?? false
         lastSeen = try container.decodeIfPresent(Date.self, forKey: .lastSeen)
         blockedUsers = try container.decodeIfPresent([String].self, forKey: .blockedUsers) ?? []
+        showOnlineStatus = try container.decodeIfPresent(Bool.self, forKey: .showOnlineStatus) ?? true
     }
     
     func encode(to encoder: Encoder) throws {
@@ -93,5 +99,6 @@ class User: Identifiable, Codable {
         try container.encode(isOnline, forKey: .isOnline)
         try container.encodeIfPresent(lastSeen, forKey: .lastSeen)
         try container.encode(blockedUsers, forKey: .blockedUsers)
+        try container.encode(showOnlineStatus, forKey: .showOnlineStatus)
     }
 }
