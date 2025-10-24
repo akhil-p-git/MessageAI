@@ -10,6 +10,11 @@ class DeleteMessageService {
     private init() {}
     
     func deleteMessageForMe(messageID: String, conversationID: String, userID: String) async throws {
+        print("🔥 DeleteMessageService: Deleting message for user")
+        print("   Message ID: \(messageID)")
+        print("   Conversation ID: \(conversationID)")
+        print("   User ID: \(userID)")
+        
         // Mark as deleted for this user only
         try await db.collection("conversations")
             .document(conversationID)
@@ -19,7 +24,8 @@ class DeleteMessageService {
                 "deletedFor": FieldValue.arrayUnion([userID])
             ])
         
-        print("✅ Deleted message for user: \(messageID)")
+        print("✅ DeleteMessageService: Successfully updated Firestore")
+        print("   Message \(messageID) now has \(userID) in deletedFor array")
     }
     
     func deleteMessageForEveryone(messageID: String, conversationID: String) async throws {

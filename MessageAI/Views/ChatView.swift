@@ -247,6 +247,10 @@ struct ChatView: View {
             typingListener?.remove()
             presenceListener?.remove()
             
+            // Clear messages array to prevent stale data on next appearance
+            messages.removeAll()
+            print("🧹 Cleared messages array on disappear")
+            
             InAppNotificationService.shared.activeConversationID = nil
             
             print("✅ ChatView: Listeners removed\n")
@@ -353,16 +357,19 @@ struct ChatView: View {
                     messageContextMenu(for: message)
                 }
             } else {
-            MessageBubble(
-                message: message,
-                isCurrentUser: message.senderID == authViewModel.currentUser?.id,
-                isGroupChat: conversation.isGroup,
-                onReply: {
-                    Task {
-                        await handleReply(to: message)
-                    }
+                MessageBubble(
+                    message: message,
+                    isCurrentUser: message.senderID == authViewModel.currentUser?.id,
+                    isGroupChat: conversation.isGroup,
+                    onReply: {
+                        Task {
+                            await handleReply(to: message)
+                        }
                 },
                 onDelete: { forEveryone in
+                    print("🟢 ChatView: onDelete callback triggered")
+                    print("   Message ID: \(message.id)")
+                    print("   For Everyone: \(forEveryone)")
                     Task {
                         await deleteMessage(message, forEveryone: forEveryone)
                     }
@@ -531,6 +538,7 @@ struct ChatView: View {
             recentlyUpdatedMessageIDs.insert(message.id)
             ChatView.globalRecentlyUpdatedMessages[message.id] = Date()
             
+            // Find the message in the current array
             if let index = messages.firstIndex(where: { $0.id == message.id }) {
                 if forEveryone {
                     // Update to show "deleted" message
@@ -547,6 +555,11 @@ struct ChatView: View {
                 // Save to SwiftData
                 try? modelContext.save()
                 print("✅ Local state updated (optimistic)")
+            } else {
+                // Message not found in current array (stale reference)
+                print("⚠️ Message \(message.id.prefix(8))... not found in current array (stale reference)")
+                print("   This can happen if you're trying to delete a message from a previous view session")
+                print("   The deletion will still be attempted in Firestore")
             }
             
             // Clear the tracking after 10 seconds (enough time for Firestore to sync and propagate)
@@ -607,6 +620,12 @@ struct ChatView: View {
         
         // Remove old listener if exists
         listener?.remove()
+        
+        // Clear messages array to ensure clean state
+        // This prevents stale data from previous view sessions
+        messages.removeAll()
+        isLoading = true  // Show loading state while we fetch fresh data
+        print("   🧹 Cleared local messages array for fresh load")
         
         listener = db.collection("conversations")
             .document(conversation.id)
@@ -1365,18 +1384,21 @@ struct MessageBubble: View {
                             // Delete options
                             if isCurrentUser {
                                 Button(role: .destructive, action: {
+                                    print("🔴 MessageBubble: Delete for Me tapped")
                                     onDelete(false)
                                 }) {
                                     Label("Delete for Me", systemImage: "trash")
                                 }
                                 
                                 Button(role: .destructive, action: {
+                                    print("🔴 MessageBubble: Delete for Everyone tapped")
                                     onDelete(true)
                                 }) {
                                     Label("Delete for Everyone", systemImage: "trash.fill")
                                 }
                             } else {
                                 Button(role: .destructive, action: {
+                                    print("🔴 MessageBubble: Delete for Me tapped (other user's message)")
                                     onDelete(false)
                                 }) {
                                     Label("Delete for Me", systemImage: "trash")
