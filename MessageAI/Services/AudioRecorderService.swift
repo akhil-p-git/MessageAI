@@ -78,28 +78,21 @@ class AudioRecorderService: NSObject, ObservableObject {
         ]
         
         do {
-            // Ensure audio session is active with proper configuration for recording
+            // Use simple configuration - already set up in init()
             let audioSession = AVAudioSession.sharedInstance()
             
-            // Use .record category for recording, or .playAndRecord if you need playback too
-            // Mode .voiceChat is optimized for voice recording
-            try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.allowBluetooth, .defaultToSpeaker])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+            // Reactivate if needed (lightweight operation)
+            if !audioSession.isOtherAudioPlaying {
+                try audioSession.setActive(true)
+            }
             
-            print("   Audio session configured:")
-            print("      Category: \(audioSession.category)")
-            print("      Mode: \(audioSession.mode)")
+            print("   Audio session ready")
             print("      Input available: \(audioSession.isInputAvailable)")
             
             self.audioRecorder = try AVAudioRecorder(url: audioFilename, settings: settings)
             self.audioRecorder?.delegate = self
             self.audioRecorder?.isMeteringEnabled = true
-            
-            if self.audioRecorder?.prepareToRecord() == true {
-                print("   ✅ Recorder prepared successfully")
-            } else {
-                print("   ⚠️ Recorder prepare returned false")
-            }
+            self.audioRecorder?.prepareToRecord()
             
             let success = self.audioRecorder?.record() ?? false
             

@@ -25,9 +25,10 @@ class AudioPlayerService: NSObject, ObservableObject {
         stopAudio()
         
         do {
-            // Configure audio session for playback
+            // CRITICAL: Use .playAndRecord so we can play recorded audio
+            // .playback mode doesn't work with recordings made in .playAndRecord mode
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [])
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
             try audioSession.setActive(true)
             print("   ✅ Audio session configured for playback")
             
@@ -41,16 +42,19 @@ class AudioPlayerService: NSObject, ObservableObject {
             print("   ✅ Audio player initialized")
             print("   Duration: \(duration)s")
             
-            audioPlayer?.play()
-            isPlaying = true
-            
-            print("   ✅ Playback started!")
-            
-            timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    self.currentTime = self.audioPlayer?.currentTime ?? 0
+            let playSuccess = audioPlayer?.play() ?? false
+            if playSuccess {
+                isPlaying = true
+                print("   ✅ Playback started!")
+                
+                timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                    guard let self = self else { return }
+                    Task { @MainActor in
+                        self.currentTime = self.audioPlayer?.currentTime ?? 0
+                    }
                 }
+            } else {
+                print("   ❌ Playback failed to start")
             }
         } catch {
             print("❌ Error playing audio: \(error)")
