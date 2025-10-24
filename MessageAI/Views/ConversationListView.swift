@@ -68,6 +68,11 @@ struct ConversationListView: View {
             .onAppear {
                 startListening()
                 startListeningForNewMessages()
+                
+                // Refresh user data to get latest profile pictures
+                Task {
+                    await loadUserInfo()
+                }
             }
             .onDisappear {
                 listener?.remove()
@@ -162,11 +167,11 @@ struct ConversationListView: View {
     private func loadUserInfo() async {
         for conversation in conversations {
             for participantID in conversation.participantIDs {
-                if userCache[participantID] == nil {
-                    if let user = try? await AuthService.shared.fetchUserDocument(userId: participantID) {
-                        await MainActor.run {
-                            userCache[participantID] = user
-                        }
+                // Always refresh user data (not just if nil)
+                // This ensures profile picture updates are reflected
+                if let user = try? await AuthService.shared.fetchUserDocument(userId: participantID) {
+                    await MainActor.run {
+                        userCache[participantID] = user
                     }
                 }
             }
