@@ -15,6 +15,7 @@ struct AIFeaturesView: View {
     @State private var showDebugPanel = false
     @State private var healthCheckStatus: HealthStatus = .unknown
     @State private var isRunningHealthCheck = false
+    @ObservedObject var networkMonitor = NetworkMonitor.shared
     
     enum HealthStatus {
         case unknown, checking, healthy, unhealthy
@@ -124,6 +125,12 @@ struct AIFeaturesView: View {
                 // Auto-run health check on appear
                 if healthCheckStatus == .unknown {
                     await runHealthCheck()
+                }
+            }
+            .overlay {
+                // Offline overlay
+                if !networkMonitor.isConnected {
+                    OfflineAIOverlay()
                 }
             }
         }
@@ -634,10 +641,61 @@ struct InstructionRow: View {
     }
 }
 
+// MARK: - Offline Overlay
+
+struct OfflineAIOverlay: View {
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.85)
+                .ignoresSafeArea()
+            
+            VStack(spacing: 24) {
+                Image(systemName: "wifi.slash")
+                    .font(.system(size: 60))
+                    .foregroundColor(.white)
+                
+                VStack(spacing: 12) {
+                    Text("AI Features Offline")
+                        .font(.title2.bold())
+                        .foregroundColor(.white)
+                    
+                    Text("AI features require an active internet connection to analyze conversations and provide insights.")
+                        .font(.body)
+                        .foregroundColor(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+                
+                VStack(spacing: 16) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                        Text("Messages work offline")
+                            .foregroundColor(.white)
+                    }
+                    
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .foregroundColor(.blue)
+                        Text("Auto-sync when online")
+                            .foregroundColor(.white)
+                    }
+                }
+                .font(.subheadline)
+            }
+            .padding(40)
+        }
+    }
+}
+
 // MARK: - Preview
 
 #Preview("AI Features View") {
     AIFeaturesView(conversationID: "test-conversation-id")
         .environmentObject(AuthViewModel())
+}
+
+#Preview("Offline Overlay") {
+    OfflineAIOverlay()
 }
 

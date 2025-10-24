@@ -30,12 +30,11 @@ struct MessageAIApp: App {
             print("✅ Firebase initialized successfully")
             print("📱 App name: \(app.name)")
             
-            if let options = app.options {
-                print("📦 Project ID: \(options.projectID ?? "Unknown")")
-                print("🔑 API Key: \(options.apiKey?.prefix(10) ?? "Unknown")...")
-                print("💾 Storage Bucket: \(options.storageBucket ?? "Unknown")")
-                print("🔗 Database URL: \(options.databaseURL ?? "Unknown")")
-            }
+            let options = app.options
+            print("📦 Project ID: \(options.projectID ?? "Unknown")")
+            print("🔑 API Key: \(options.apiKey?.prefix(10) ?? "Unknown")...")
+            print("💾 Storage Bucket: \(options.storageBucket ?? "Unknown")")
+            print("🔗 Database URL: \(options.databaseURL ?? "Unknown")")
         } else {
             print("❌ Firebase NOT initialized!")
         }

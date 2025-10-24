@@ -13,10 +13,16 @@ enum MessageType: String, Codable {
 }
 
 enum MessageStatus: String, Codable {
-    case sending
-    case sent
-    case delivered
-    case read
+    case pending    // Queued for sending (offline)
+    case sending    // Currently being sent
+    case sent       // Successfully sent
+    case delivered  // Delivered to recipient
+    case read       // Read by recipient
+    case failed     // Failed to send after retries
+    
+    var isPendingSync: Bool {
+        return self == .pending || self == .failed
+    }
 }
 
 @Model
@@ -37,6 +43,11 @@ class Message: Identifiable {
     var deletedFor: [String]
     var deletedForEveryone: Bool
     
+    // Offline support properties
+    var syncAttempts: Int = 0
+    var lastSyncAttempt: Date?
+    var needsSync: Bool = false
+    
     var status: MessageStatus {
         get {
             MessageStatus(rawValue: statusRaw) ?? .sent
@@ -46,7 +57,7 @@ class Message: Identifiable {
         }
     }
     
-    init(id: String, conversationID: String, senderID: String, content: String, timestamp: Date = Date(), status: MessageStatus = .sent, type: MessageType = .text, mediaURL: String? = nil, readBy: [String] = [], reactions: [String: [String]] = [:], replyToMessageID: String? = nil, replyToContent: String? = nil, replyToSenderID: String? = nil, deletedFor: [String] = [], deletedForEveryone: Bool = false) {
+    init(id: String, conversationID: String, senderID: String, content: String, timestamp: Date = Date(), status: MessageStatus = .sent, type: MessageType = .text, mediaURL: String? = nil, readBy: [String] = [], reactions: [String: [String]] = [:], replyToMessageID: String? = nil, replyToContent: String? = nil, replyToSenderID: String? = nil, deletedFor: [String] = [], deletedForEveryone: Bool = false, syncAttempts: Int = 0, lastSyncAttempt: Date? = nil, needsSync: Bool = false) {
         self.id = id
         self.conversationID = conversationID
         self.senderID = senderID
@@ -62,6 +73,9 @@ class Message: Identifiable {
         self.replyToSenderID = replyToSenderID
         self.deletedFor = deletedFor
         self.deletedForEveryone = deletedForEveryone
+        self.syncAttempts = syncAttempts
+        self.lastSyncAttempt = lastSyncAttempt
+        self.needsSync = needsSync
     }
     
     func toDictionary() -> [String: Any] {

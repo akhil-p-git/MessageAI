@@ -27,9 +27,16 @@ struct ChatView: View {
     @State private var otherUser: User?
     @State private var showBlockReport = false
     @State private var showAIPanel = false
+    @StateObject private var networkMonitor = NetworkMonitor.shared
+    @StateObject private var syncService = MessageSyncService.shared
     
     var body: some View {
         VStack(spacing: 0) {
+            // Offline/Syncing Banner
+            OfflineBanner()
+                .padding(.horizontal)
+                .padding(.top, 4)
+            
             // Other user info bar (for 1-on-1 chats)
             if shouldShowUserInfoBar {
                 userInfoBar
@@ -85,19 +92,34 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 12) {
+                    // Network status indicator
+                    if !networkMonitor.isConnected {
+                        Image(systemName: "wifi.slash")
+                            .foregroundColor(.orange)
+                            .font(.caption)
+                    }
+                    
                     // AI Features Button
                     Button {
                         showAIPanel = true
                     } label: {
                         Image(systemName: "sparkles")
                             .foregroundStyle(
+                                networkMonitor.isConnected ?
                                 LinearGradient(
                                     colors: [.blue, .purple, .pink],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ) :
+                                LinearGradient(
+                                    colors: [.gray, .gray],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 )
                             )
                     }
+                    .disabled(!networkMonitor.isConnected)
+                    .opacity(networkMonitor.isConnected ? 1.0 : 0.5)
                     
                     toolbarMenu
                 }
@@ -546,48 +568,63 @@ struct ChatView: View {
             userID: currentUser.id
         )
         
+        // Determine initial status based on connectivity
+        let initialStatus: MessageStatus = networkMonitor.isConnected ? .sending : .pending
+        
         let message = Message(
             id: UUID().uuidString,
             conversationID: conversation.id,
             senderID: currentUser.id,
             content: content,
             timestamp: Date(),
-            status: .sent,
+            status: initialStatus,
             type: .text,
             mediaURL: nil,
             readBy: [],
             reactions: [:],
             replyToMessageID: replyingToMessage?.id,
             replyToContent: replyingToMessage?.content,
-            replyToSenderID: replyingToMessage?.senderID
+            replyToSenderID: replyingToMessage?.senderID,
+            needsSync: true
         )
         
         replyingToMessage = nil
         replyToSenderName = nil
         
+        // Use offline-first approach: save locally first, then sync
         Task {
-            let db = Firestore.firestore()
-            
             do {
-                var messageData = message.toDictionary()
-                messageData["timestamp"] = Timestamp(date: message.timestamp)
-                messageData["status"] = "sent"
+                try await syncService.queueMessage(
+                    message,
+                    conversationID: conversation.id,
+                    currentUserID: currentUser.id,
+                    modelContext: modelContext
+                )
                 
-                try await db.collection("conversations")
-                    .document(conversation.id)
-                    .collection("messages")
-                    .document(message.id)
-                    .setData(messageData)
-                
-                try await db.collection("conversations")
-                    .document(conversation.id)
-                    .updateData([
-                        "lastMessage": content,
-                        "lastMessageTime": Timestamp(date: Date()),
-                        "lastSenderID": currentUser.id
-                    ])
+                // If online, also update Firebase directly
+                if networkMonitor.isConnected {
+                    let db = Firestore.firestore()
+                    
+                    var messageData = message.toDictionary()
+                    messageData["timestamp"] = Timestamp(date: message.timestamp)
+                    messageData["status"] = "sent"
+                    
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .collection("messages")
+                        .document(message.id)
+                        .setData(messageData)
+                    
+                    try await db.collection("conversations")
+                        .document(conversation.id)
+                        .updateData([
+                            "lastMessage": content,
+                            "lastMessageTime": Timestamp(date: Date()),
+                            "lastSenderID": currentUser.id
+                        ])
+                }
             } catch {
-                print("❌ Error sending message: \(error)")
+                print("❌ Error queueing message: \(error)")
             }
         }
     }
@@ -852,19 +889,15 @@ struct MessageBubble: View {
                             .foregroundColor(.secondary)
                         
                         if isCurrentUser {
-                            HStack(spacing: 2) {
-                                Image(systemName: statusIcon)
-                                    .font(.caption2)
-                                    .foregroundColor(statusColor)
-                                
-                                if isGroupChat && !message.readBy.isEmpty {
-                                    Button(action: {
-                                        showReadReceipts = true
-                                    }) {
-                                        Text("\(message.readBy.count)")
-                                            .font(.system(size: 9, weight: .semibold))
-                                            .foregroundColor(statusColor)
-                                    }
+                            MessageStatusIndicator(status: message.status)
+                            
+                            if isGroupChat && !message.readBy.isEmpty && message.status == .read {
+                                Button(action: {
+                                    showReadReceipts = true
+                                }) {
+                                    Text("\(message.readBy.count)")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .foregroundColor(.blue)
                                 }
                             }
                         }
