@@ -36,11 +36,12 @@ class PresenceService {
         do {
             // Only show as online if privacy setting allows
             var updateData: [String: Any] = [
-                "isOnline": showOnlineStatus && isOnline
+                "isOnline": showOnlineStatus && isOnline,
+                "lastHeartbeat": FieldValue.serverTimestamp()  // Use server timestamp for accurate tracking
             ]
             
             if !isOnline {
-                updateData["lastSeen"] = Timestamp(date: Date())
+                updateData["lastSeen"] = FieldValue.serverTimestamp()
             }
             
             try await db.collection("users")
@@ -68,13 +69,16 @@ class PresenceService {
         }
         
         presenceTask = Task {
+            // First update immediately
+            await setUserOnline(userID: userID, isOnline: true, showOnlineStatus: showOnlineStatus)
+            
             while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000) // Every 15 seconds (reduced from 30)
                 await setUserOnline(userID: userID, isOnline: true, showOnlineStatus: showOnlineStatus)
-                try? await Task.sleep(nanoseconds: 30_000_000_000) // Every 30 seconds
             }
         }
         
-        print("👀 Started presence updates for \(userID.prefix(8))... (showOnline: \(showOnlineStatus))")
+        print("👀 Started presence updates for \(userID.prefix(8))... (showOnline: \(showOnlineStatus), interval: 15s)")
     }
     
     func stopPresenceUpdates(userID: String) {

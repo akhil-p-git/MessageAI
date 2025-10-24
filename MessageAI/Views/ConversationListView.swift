@@ -354,7 +354,7 @@ struct ConversationRow: View {
                         )
                         
                         // Show online status from cached user data (not real-time in list)
-                        if otherUser.showOnlineStatus && otherUser.isOnline {
+                        if otherUser.isActuallyOnline {
                             OnlineStatusIndicator(
                                 isOnline: true,
                                 size: 14

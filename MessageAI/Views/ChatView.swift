@@ -294,13 +294,13 @@ struct ChatView: View {
                 // Only show online status if user allows it
                 if user.showOnlineStatus {
                     OnlineStatusIndicator(
-                        isOnline: user.isOnline,
+                        isOnline: user.isActuallyOnline,
                         size: 8
                     )
                 }
                 // Only show last seen if user allows it
                 if user.showOnlineStatus {
-                LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
+                LastSeenView(isOnline: user.isActuallyOnline, lastSeen: user.lastSeen)
                 }
             }
             Spacer()
@@ -355,51 +355,100 @@ struct ChatView: View {
     
     @ViewBuilder
     private func messageView(for message: Message) -> some View {
-            if message.type == .voice {
-                VoiceMessageBubble(
-                    message: message,
-                    isCurrentUser: message.senderID == authViewModel.currentUser?.id
+        let isCurrentUser = message.senderID == authViewModel.currentUser?.id
+        let senderName = getSenderDisplayName(for: message.senderID)
+        
+        HStack(alignment: .bottom, spacing: 8) {
+            // Profile picture on left for other users (WhatsApp style)
+            if !isCurrentUser && conversation.isGroup {
+                ProfileImageView(
+                    url: userDisplayNames[message.senderID] != nil ? nil : nil, // Will fetch from cache
+                    size: 32,
+                    fallbackText: senderName
                 )
-                .contextMenu {
-                    messageContextMenu(for: message)
+                .offset(y: 0) // Align to bottom of message
+            } else if !isCurrentUser && !conversation.isGroup {
+                // For 1-on-1, still show profile pic
+                if let otherUser = otherUser {
+                    ProfileImageView(
+                        url: otherUser.profilePictureURL,
+                        size: 32,
+                        fallbackText: otherUser.displayName
+                    )
                 }
-            } else if message.type == .image {
-                ImageMessageBubble(
-                    message: message,
-                    isCurrentUser: message.senderID == authViewModel.currentUser?.id
-                )
-                .contextMenu {
-                    messageContextMenu(for: message)
+            }
+            
+            // Message content
+            VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 2) {
+                // Sender name for group chats (only for others)
+                if conversation.isGroup && !isCurrentUser {
+                    Text(senderName)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.blue)
+                        .padding(.leading, 12)
+                        .padding(.top, 4)
                 }
-            } else {
-                MessageBubble(
-                    message: message,
-                    isCurrentUser: message.senderID == authViewModel.currentUser?.id,
-                    isGroupChat: conversation.isGroup,
-                    replySenderName: message.replyToSenderID != nil ? getSenderDisplayName(for: message.replyToSenderID!) : nil,
-                    onReply: {
-                        Task {
-                            await handleReply(to: message)
+                
+                // Message bubble
+                if message.type == .voice {
+                    VoiceMessageBubble(
+                        message: message,
+                        isCurrentUser: isCurrentUser
+                    )
+                    .contextMenu {
+                        messageContextMenu(for: message)
+                    }
+                } else if message.type == .image {
+                    ImageMessageBubble(
+                        message: message,
+                        isCurrentUser: isCurrentUser
+                    )
+                    .contextMenu {
+                        messageContextMenu(for: message)
+                    }
+                } else {
+                    MessageBubble(
+                        message: message,
+                        isCurrentUser: isCurrentUser,
+                        isGroupChat: conversation.isGroup,
+                        replySenderName: message.replyToSenderID != nil ? getSenderDisplayName(for: message.replyToSenderID!) : nil,
+                        onReply: {
+                            Task {
+                                await handleReply(to: message)
+                            }
+                        },
+                        onDelete: { forEveryone in
+                            print("🟢 ChatView: onDelete callback triggered")
+                            print("   Message ID: \(message.id)")
+                            print("   For Everyone: \(forEveryone)")
+                            Task {
+                                await deleteMessage(message, forEveryone: forEveryone)
+                            }
                         }
-                },
-                onDelete: { forEveryone in
-                    print("🟢 ChatView: onDelete callback triggered")
-                    print("   Message ID: \(message.id)")
-                    print("   For Everyone: \(forEveryone)")
-                    Task {
-                        await deleteMessage(message, forEveryone: forEveryone)
-                    }
-                }
-            )
-            .onAppear {
-                // Load reply sender name if needed
-                if let replySenderID = message.replyToSenderID {
-                    Task {
-                        await loadUserDisplayName(for: replySenderID)
-                    }
+                    )
                 }
             }
+            
+            // Spacer to push messages to correct side
+            if !isCurrentUser {
+                Spacer(minLength: 60) // Leave space on right for incoming messages
             }
+        }
+        .onAppear {
+            // Load reply sender name if needed
+            if let replySenderID = message.replyToSenderID {
+                Task {
+                    await loadUserDisplayName(for: replySenderID)
+                }
+            }
+            // Load sender info for group chats
+            if conversation.isGroup && !isCurrentUser {
+                Task {
+                    await loadUserDisplayName(for: message.senderID)
+                }
+            }
+        }
     }
     
     private var typingIndicatorView: some View {
@@ -1493,13 +1542,39 @@ struct MessageBubble: View {
                         .padding(.horizontal, 4)
                     }
                     
-                    Text(message.content)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(isCurrentUser ? Color.blue : Color(.systemGray5))
-                        .foregroundColor(isCurrentUser ? .white : .primary)
-                        .cornerRadius(18)
-                        .contextMenu {
+                    // WhatsApp-style message bubble with timestamp inside
+                    HStack(alignment: .bottom, spacing: 4) {
+                        Text(message.content)
+                        
+                        // Timestamp and status in bottom right (WhatsApp style)
+                        HStack(spacing: 3) {
+                            Text(formattedTime)
+                                .font(.system(size: 11))
+                                .foregroundColor(isCurrentUser ? Color.white.opacity(0.7) : Color.secondary)
+                            
+                            if isCurrentUser {
+                                MessageStatusIndicator(status: message.status)
+                                
+                                if isGroupChat && !message.readBy.isEmpty && message.status == .read {
+                                    Button(action: {
+                                        showReadReceipts = true
+                                    }) {
+                                        Text("\(message.readBy.count)")
+                                            .font(.system(size: 9, weight: .semibold))
+                                            .foregroundColor(isCurrentUser ? .white.opacity(0.9) : .blue)
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.leading, 8)
+                        .alignmentGuide(.bottom) { d in d[.bottom] }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isCurrentUser ? Color.blue : Color(.systemGray5))
+                    .foregroundColor(isCurrentUser ? .white : .primary)
+                    .cornerRadius(18)
+                    .contextMenu {
                             Button(action: onReply) {
                                 Label("Reply", systemImage: "arrowshape.turn.up.left")
                             }
@@ -1561,26 +1636,6 @@ struct MessageBubble: View {
                         }
                     
                     MessageReactionsView(message: message, isCurrentUser: isCurrentUser)
-                    
-                    HStack(spacing: 4) {
-                        Text(formattedTime)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        
-                        if isCurrentUser {
-                            MessageStatusIndicator(status: message.status)
-                                
-                            if isGroupChat && !message.readBy.isEmpty && message.status == .read {
-                                    Button(action: {
-                                        showReadReceipts = true
-                                    }) {
-                                        Text("\(message.readBy.count)")
-                                            .font(.system(size: 9, weight: .semibold))
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                    }
                 }
             }
             .overlay(alignment: isCurrentUser ? .topLeading : .topTrailing) {

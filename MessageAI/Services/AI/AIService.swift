@@ -262,13 +262,18 @@ class AIService {
             
             self.log("📥 Received response from extractActionItems", type: .response)
             
-            if let data = result.data as? [String: Any] {
-                self.log("Response data: \(data)", type: .info)
+            guard let data = result.data as? [String: Any] else {
+                self.log("Response is not a dictionary", type: .error)
+                self.log("Response type: \(type(of: result.data))", type: .error)
+                throw AIServiceError.parsingError
             }
             
-            guard let data = result.data as? [String: Any],
-                  let actionItems = ActionItemsResult(from: data) else {
+            self.log("Response data keys: \(data.keys.joined(separator: ", "))", type: .info)
+            self.log("Full response: \(data)", type: .info)
+            
+            guard let actionItems = ActionItemsResult(from: data) else {
                 self.log("Failed to parse action items from response", type: .error)
+                self.log("Expected 'items' or 'actionItems' key in response", type: .error)
                 throw AIServiceError.parsingError
             }
             

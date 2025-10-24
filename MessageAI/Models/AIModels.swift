@@ -168,7 +168,16 @@ struct ActionItemsResult: Codable {
     let items: [ActionItem]
     
     init?(from dict: [String: Any]) {
-        guard let itemsArray = dict["items"] as? [[String: Any]] else {
+        // Try multiple possible keys for flexibility
+        let itemsArray: [[String: Any]]
+        
+        if let items = dict["items"] as? [[String: Any]] {
+            itemsArray = items
+        } else if let actionItems = dict["actionItems"] as? [[String: Any]] {
+            itemsArray = actionItems
+        } else {
+            print("❌ ActionItemsResult: Could not find 'items' or 'actionItems' key in response")
+            print("   Available keys: \(dict.keys)")
             return nil
         }
         
