@@ -34,6 +34,11 @@ struct ChatView: View {
     @State private var showReadReceipts = false
     @State private var selectedMessageForReceipts: Message?
     
+    // Track optimistic updates with timestamps to prevent listener overwrites
+    // Using static to persist across view recreations
+    @State private var recentlyUpdatedMessageIDs: Set<String> = []
+    private static var globalRecentlyUpdatedMessages: [String: Date] = [:]
+    
     var body: some View {
         VStack(spacing: 0) {
             // Offline/Syncing Banner
@@ -56,9 +61,9 @@ struct ChatView: View {
                     
                     // Small delay to ensure SwiftUI has rendered the new message
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        if let lastMessage = messages.last {
-                            withAnimation {
-                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    if let lastMessage = messages.last {
+                        withAnimation {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
                             }
                         }
                     }
@@ -67,8 +72,8 @@ struct ChatView: View {
                     if isTyping {
                         // Small delay to ensure typing indicator is rendered
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            withAnimation {
-                                proxy.scrollTo("typing-indicator", anchor: .bottom)
+                        withAnimation {
+                            proxy.scrollTo("typing-indicator", anchor: .bottom)
                             }
                         }
                     }
@@ -134,7 +139,7 @@ struct ChatView: View {
                     .disabled(!networkMonitor.isConnected)
                     .opacity(networkMonitor.isConnected ? 1.0 : 0.5)
                     
-                    toolbarMenu
+                toolbarMenu
                 }
             }
         }
@@ -276,7 +281,7 @@ struct ChatView: View {
                 }
                 // Only show last seen if user allows it
                 if user.showOnlineStatus {
-                    LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
+                LastSeenView(isOnline: user.isOnline, lastSeen: user.lastSeen)
                 }
             }
             Spacer()
@@ -315,11 +320,10 @@ struct ChatView: View {
     
     private var messagesView: some View {
         LazyVStack(spacing: 12) {
-            ForEach(messages) { message in
+            ForEach(messages, id: \.id) { message in
                 // Only show message if not deleted for current user
                 if !message.deletedFor.contains(authViewModel.currentUser?.id ?? "") {
-                    messageView(for: message)
-                        .id("\(message.id)-\(message.deletedFor.count)-\(message.deletedForEveryone)")
+                messageView(for: message)
                 }
             }
             
@@ -332,7 +336,6 @@ struct ChatView: View {
     
     @ViewBuilder
     private func messageView(for message: Message) -> some View {
-        Group {
             if message.type == .voice {
                 VoiceMessageBubble(
                     message: message,
@@ -350,19 +353,22 @@ struct ChatView: View {
                     messageContextMenu(for: message)
                 }
             } else {
-                MessageBubble(
-                    message: message,
-                    isCurrentUser: message.senderID == authViewModel.currentUser?.id,
-                    isGroupChat: conversation.isGroup,
-                    onReply: {
-                        Task {
-                            await handleReply(to: message)
-                        }
+            MessageBubble(
+                message: message,
+                isCurrentUser: message.senderID == authViewModel.currentUser?.id,
+                isGroupChat: conversation.isGroup,
+                onReply: {
+                    Task {
+                        await handleReply(to: message)
                     }
-                )
+                },
+                onDelete: { forEveryone in
+                    Task {
+                        await deleteMessage(message, forEveryone: forEveryone)
+                    }
+                }
+            )
             }
-        }
-        .id(message.id)
     }
     
     private var typingIndicatorView: some View {
@@ -520,6 +526,11 @@ struct ChatView: View {
         // Update local state FIRST (optimistic update)
         // This prevents UI flickering and sync issues
         await MainActor.run {
+            // Track this as a recent update to prevent listener from overwriting it
+            // Use both local and static tracking for persistence across view recreations
+            recentlyUpdatedMessageIDs.insert(message.id)
+            ChatView.globalRecentlyUpdatedMessages[message.id] = Date()
+            
             if let index = messages.firstIndex(where: { $0.id == message.id }) {
                 if forEveryone {
                     // Update to show "deleted" message
@@ -536,6 +547,16 @@ struct ChatView: View {
                 // Save to SwiftData
                 try? modelContext.save()
                 print("✅ Local state updated (optimistic)")
+            }
+            
+            // Clear the tracking after 10 seconds (enough time for Firestore to sync and propagate)
+            Task {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                await MainActor.run {
+                    recentlyUpdatedMessageIDs.remove(message.id)
+                    ChatView.globalRecentlyUpdatedMessages.removeValue(forKey: message.id)
+                    print("⏱️ Cleared optimistic tracking for \(message.id.prefix(8))...")
+                }
             }
         }
         
@@ -560,6 +581,10 @@ struct ChatView: View {
             
             // Revert local changes if Firestore update failed
             await MainActor.run {
+                // Remove from tracking (both local and global)
+                recentlyUpdatedMessageIDs.remove(message.id)
+                ChatView.globalRecentlyUpdatedMessages.removeValue(forKey: message.id)
+                
                 if let index = messages.firstIndex(where: { $0.id == message.id }) {
                     if forEveryone {
                         messages[index].content = message.content
@@ -603,7 +628,14 @@ struct ChatView: View {
                 print("📨 ChatView: Received snapshot with \(snapshot.documents.count) messages")
                 print("   Document changes: \(snapshot.documentChanges.count)")
                 
-                // Handle document changes to update existing messages efficiently
+                // Collect all changes first, then apply them in one batch on MainActor
+                // This prevents crashes from modifying the array while SwiftUI is rendering
+                var messagesToAdd: [Message] = []
+                var messagesToUpdate: [(index: Int, message: Message)] = []
+                var messageIDsToRemove: [String] = []
+                var needsSort = false
+                
+                // Process all changes
                 for change in snapshot.documentChanges {
                     var data = change.document.data()
                     
@@ -621,12 +653,9 @@ struct ChatView: View {
                     case .added:
                         // Check if message already exists (to avoid duplicates)
                         if !self.messages.contains(where: { $0.id == updatedMessage.id }) {
-                            self.messages.append(updatedMessage)
-                            print("   ➕ Added message: '\(updatedMessage.content)' from \(updatedMessage.senderID.prefix(8))...")
-                            
-                            // Save to SwiftData
-                            self.modelContext.insert(updatedMessage)
-                            try? self.modelContext.save()
+                            messagesToAdd.append(updatedMessage)
+                            needsSort = true
+                            print("   ➕ Will add message: '\(updatedMessage.content)' from \(updatedMessage.senderID.prefix(8))...")
                             
                             // Trigger notification for messages from others
                             if let currentUser = self.authViewModel.currentUser,
@@ -644,41 +673,69 @@ struct ChatView: View {
                         }
                         
                     case .modified:
-                        // Find and update the existing message
-                        if let index = self.messages.firstIndex(where: { $0.id == updatedMessage.id }) {
-                            print("   ✏️ Modifying message \(updatedMessage.id.prefix(8))...")
-                            print("      Content: '\(updatedMessage.content)'")
-                            print("      Deleted for: \(updatedMessage.deletedFor.count) users")
-                            print("      Deleted for everyone: \(updatedMessage.deletedForEveryone)")
-                            
-                            // Update the message properties
-                            let existingMessage = self.messages[index]
-                            existingMessage.content = updatedMessage.content
-                            existingMessage.statusRaw = updatedMessage.statusRaw
-                            existingMessage.readBy = updatedMessage.readBy
-                            existingMessage.reactions = updatedMessage.reactions
-                            existingMessage.mediaURL = updatedMessage.mediaURL
-                            existingMessage.deletedFor = updatedMessage.deletedFor
-                            existingMessage.deletedForEveryone = updatedMessage.deletedForEveryone
-                            
-                            // Save to SwiftData
-                            try? self.modelContext.save()
-                            
-                            print("   ✅ Message updated in local state")
+                        // Skip if this message was recently updated optimistically
+                        // Check both local and global tracking
+                        let isRecentlyUpdated = self.recentlyUpdatedMessageIDs.contains(updatedMessage.id) ||
+                            (ChatView.globalRecentlyUpdatedMessages[updatedMessage.id] != nil &&
+                             Date().timeIntervalSince(ChatView.globalRecentlyUpdatedMessages[updatedMessage.id]!) < 10)
+                        
+                        if isRecentlyUpdated {
+                            print("   ⏭️ Skipping listener update for \(updatedMessage.id.prefix(8))... (recently updated optimistically)")
+                            continue
                         }
                         
+                        // Store the message itself, not the index (index might change)
+                        messagesToUpdate.append((index: -1, message: updatedMessage))
+                        print("   ✏️ Will modify message \(updatedMessage.id.prefix(8))...")
+                        print("      Content: '\(updatedMessage.content)'")
+                        print("      Deleted for: \(updatedMessage.deletedFor.count) users")
+                        print("      Deleted for everyone: \(updatedMessage.deletedForEveryone)")
+                        
                     case .removed:
-                        self.messages.removeAll(where: { $0.id == updatedMessage.id })
-                        print("   🗑️ Removed message: \(updatedMessage.id)")
+                        messageIDsToRemove.append(updatedMessage.id)
+                        print("   🗑️ Will remove message: \(updatedMessage.id)")
                     }
                 }
                 
-                // Sort messages by timestamp
-                self.messages.sort { $0.timestamp < $1.timestamp }
-                
+                // Apply all changes in one batch on MainActor
+                Task { @MainActor in
+                    // Add new messages
+                    for message in messagesToAdd {
+                        self.messages.append(message)
+                        self.modelContext.insert(message)
+                    }
+                    
+                    // Update existing messages (find by ID, not by index)
+                    for update in messagesToUpdate {
+                        if let index = self.messages.firstIndex(where: { $0.id == update.message.id }) {
+                            let existingMessage = self.messages[index]
+                            existingMessage.content = update.message.content
+                            existingMessage.statusRaw = update.message.statusRaw
+                            existingMessage.readBy = update.message.readBy
+                            existingMessage.reactions = update.message.reactions
+                            existingMessage.mediaURL = update.message.mediaURL
+                            existingMessage.deletedFor = update.message.deletedFor
+                            existingMessage.deletedForEveryone = update.message.deletedForEveryone
+                        }
+                    }
+                    
+                    // Remove messages
+                    for messageID in messageIDsToRemove {
+                        self.messages.removeAll(where: { $0.id == messageID })
+                    }
+                    
+                    // Sort if needed (only once, after all changes)
+                    if needsSort || !messagesToUpdate.isEmpty || !messageIDsToRemove.isEmpty {
+                        self.messages.sort { $0.timestamp < $1.timestamp }
+                    }
+                    
+                    // Save to SwiftData once after all changes
+                    try? self.modelContext.save()
+                    
                 self.isLoading = false
                 
-                print("   ✅ Total messages in chat: \(self.messages.count)\n")
+                    print("   ✅ Total messages in chat: \(self.messages.count)\n")
+                }
                 
                 // Mark messages as read after a short delay
                 Task {
@@ -837,24 +894,24 @@ struct ChatView: View {
                 
                 // If online, also update Firebase directly
                 if networkMonitor.isConnected {
-                    let db = Firestore.firestore()
-                    
+            let db = Firestore.firestore()
+            
                     print("\n📤 Uploading message to Firebase...")
                     print("   Message ID: \(message.id)")
                     print("   Content: \(content)")
                     print("   Conversation ID: \(conversation.id)")
                     
-                    var messageData = message.toDictionary()
-                    messageData["timestamp"] = Timestamp(date: message.timestamp)
-                    messageData["status"] = "sent"
+                var messageData = message.toDictionary()
+                messageData["timestamp"] = Timestamp(date: message.timestamp)
+                messageData["status"] = "sent"
                     messageData["senderName"] = currentUser.displayName
-                    
-                    try await db.collection("conversations")
-                        .document(conversation.id)
-                        .collection("messages")
-                        .document(message.id)
-                        .setData(messageData)
-                    
+                
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .setData(messageData)
+                
                     print("   ✅ Message document created")
                     
                     // Get all participants except the sender
@@ -868,15 +925,15 @@ struct ChatView: View {
                     // Use setData with merge to create document if it doesn't exist
                     // Include ALL conversation fields to ensure document is complete
                     do {
-                        try await db.collection("conversations")
-                            .document(conversation.id)
+                try await db.collection("conversations")
+                    .document(conversation.id)
                             .setData([
                                 "id": conversation.id,
                                 "participantIDs": conversation.participantIDs,
                                 "isGroup": conversation.isGroup,
                                 "name": conversation.name ?? "",
-                                "lastMessage": content,
-                                "lastMessageTime": Timestamp(date: Date()),
+                        "lastMessage": content,
+                        "lastMessageTime": Timestamp(date: Date()),
                                 "lastSenderID": currentUser.id,
                                 "lastMessageID": message.id,
                                 "unreadBy": otherParticipants,
@@ -887,7 +944,7 @@ struct ChatView: View {
                         print("      lastMessage: \(content)")
                         print("      lastSenderID: \(currentUser.id)")
                         print("      unreadBy: \(otherParticipants)\n")
-                    } catch {
+            } catch {
                         print("   ❌ CRITICAL ERROR updating conversation metadata!")
                         print("      Error: \(error.localizedDescription)")
                         if let nsError = error as NSError? {
@@ -963,15 +1020,15 @@ struct ChatView: View {
             // Use setData with merge to create document if it doesn't exist
             // Include ALL conversation fields to ensure document is complete
             do {
-                try await db.collection("conversations")
-                    .document(conversation.id)
+            try await db.collection("conversations")
+                .document(conversation.id)
                     .setData([
                         "id": conversation.id,
                         "participantIDs": conversation.participantIDs,
                         "isGroup": conversation.isGroup,
                         "name": conversation.name ?? "",
-                        "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
-                        "lastMessageTime": Timestamp(date: Date()),
+                    "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
+                    "lastMessageTime": Timestamp(date: Date()),
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
                         "unreadBy": otherParticipants,
@@ -1067,15 +1124,15 @@ struct ChatView: View {
             // Use setData with merge to create document if it doesn't exist
             // Include ALL conversation fields to ensure document is complete
             do {
-                try await db.collection("conversations")
-                    .document(conversation.id)
+            try await db.collection("conversations")
+                .document(conversation.id)
                     .setData([
                         "id": conversation.id,
                         "participantIDs": conversation.participantIDs,
                         "isGroup": conversation.isGroup,
                         "name": conversation.name ?? "",
-                        "lastMessage": "🎤 Voice message",
-                        "lastMessageTime": Timestamp(date: Date()),
+                    "lastMessage": "🎤 Voice message",
+                    "lastMessageTime": Timestamp(date: Date()),
                         "lastSenderID": currentUser.id,
                         "lastMessageID": message.id,
                         "unreadBy": otherParticipants,
@@ -1084,7 +1141,7 @@ struct ChatView: View {
                 
                 print("   ✅ Conversation metadata updated!")
                 print("✅ Voice message sent successfully!\n")
-            } catch {
+        } catch {
                 print("   ⚠️ Warning: Conversation metadata update failed")
                 print("      Error: \(error.localizedDescription)")
                 // Don't throw - message was created successfully
@@ -1211,10 +1268,10 @@ struct ChatView: View {
             if message.statusRaw != newStatus {
                 do {
                     try await db.collection("conversations")
-                        .document(conversation.id)
-                        .collection("messages")
-                        .document(message.id)
-                        .updateData(["status": newStatus])
+                    .document(conversation.id)
+                    .collection("messages")
+                    .document(message.id)
+                    .updateData(["status": newStatus])
                     
                     // Update local message
                     message.statusRaw = newStatus
@@ -1236,6 +1293,7 @@ struct MessageBubble: View {
     let isCurrentUser: Bool
     let isGroupChat: Bool
     let onReply: () -> Void
+    let onDelete: (Bool) -> Void  // Add delete callback
     @State private var showReadReceipts = false
     @State private var showReactionPicker = false
     @State private var showForwardSheet = false
@@ -1301,6 +1359,29 @@ struct MessageBubble: View {
                                     Label("Read Receipts", systemImage: "eye")
                                 }
                             }
+                            
+                            Divider()
+                            
+                            // Delete options
+                            if isCurrentUser {
+                                Button(role: .destructive, action: {
+                                    onDelete(false)
+                                }) {
+                                    Label("Delete for Me", systemImage: "trash")
+                                }
+                                
+                                Button(role: .destructive, action: {
+                                    onDelete(true)
+                                }) {
+                                    Label("Delete for Everyone", systemImage: "trash.fill")
+                                }
+                            } else {
+                                Button(role: .destructive, action: {
+                                    onDelete(false)
+                                }) {
+                                    Label("Delete for Me", systemImage: "trash")
+                                }
+                            }
                         }
                         .onLongPressGesture {
                             showReactionPicker = true
@@ -1315,13 +1396,13 @@ struct MessageBubble: View {
                         
                         if isCurrentUser {
                             MessageStatusIndicator(status: message.status)
-                            
+                                
                             if isGroupChat && !message.readBy.isEmpty && message.status == .read {
-                                Button(action: {
-                                    showReadReceipts = true
-                                }) {
-                                    Text("\(message.readBy.count)")
-                                        .font(.system(size: 9, weight: .semibold))
+                                    Button(action: {
+                                        showReadReceipts = true
+                                    }) {
+                                        Text("\(message.readBy.count)")
+                                            .font(.system(size: 9, weight: .semibold))
                                         .foregroundColor(.blue)
                                 }
                             }
