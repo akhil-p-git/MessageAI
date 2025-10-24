@@ -100,34 +100,51 @@ struct SearchResult: Identifiable, Codable {
     let sender: String?
     let timestamp: Date
     let relevanceScore: Double
+    let category: String?
+    let context: String?
     
-    init(id: String = UUID().uuidString, message: String, sender: String? = nil, timestamp: Date, relevanceScore: Double) {
+    init(id: String = UUID().uuidString, message: String, sender: String? = nil, timestamp: Date, relevanceScore: Double, category: String? = nil, context: String? = nil) {
         self.id = id
         self.message = message
         self.sender = sender
         self.timestamp = timestamp
         self.relevanceScore = relevanceScore
+        self.category = category
+        self.context = context
     }
     
     init?(from dict: [String: Any]) {
-        guard let message = dict["message"] as? String else {
+        // Backend returns either "message" or "snippet"
+        guard let message = dict["message"] as? String ?? dict["snippet"] as? String else {
+            print("❌ SearchResult: Missing 'message' or 'snippet' field")
             return nil
         }
         
-        self.id = dict["id"] as? String ?? UUID().uuidString
+        // Use messageId if available, otherwise generate UUID
+        if let messageId = dict["messageId"] as? Int {
+            self.id = String(messageId)
+        } else {
+            self.id = dict["id"] as? String ?? UUID().uuidString
+        }
+        
         self.message = message
         self.sender = dict["sender"] as? String
         self.relevanceScore = dict["relevanceScore"] as? Double ?? 0.0
+        self.category = dict["category"] as? String
+        self.context = dict["context"] as? String
         
-        // Parse timestamp
+        // Parse timestamp (backend may not return it, use current date as fallback)
         if let timestampStr = dict["timestamp"] as? String {
             let formatter = ISO8601DateFormatter()
             self.timestamp = formatter.date(from: timestampStr) ?? Date()
         } else if let timestamp = dict["timestamp"] as? Date {
             self.timestamp = timestamp
         } else {
+            // Use current date if no timestamp provided
             self.timestamp = Date()
         }
+        
+        print("✅ SearchResult parsed: message=\(message.prefix(50)), score=\(self.relevanceScore)")
     }
 }
 
@@ -199,13 +216,28 @@ struct DecisionsResult: Codable {
 
 struct SmartSearchResults: Codable {
     let results: [SearchResult]
+    let summary: String?
     
     init?(from dict: [String: Any]) {
+        print("🔍 SmartSearchResults: Parsing response with keys: \(dict.keys.joined(separator: ", "))")
+        
         guard let resultsArray = dict["results"] as? [[String: Any]] else {
+            print("❌ SmartSearchResults: Missing 'results' array")
+            print("Full response: \(dict)")
             return nil
         }
         
+        print("📊 SmartSearchResults: Found \(resultsArray.count) results in array")
+        
         self.results = resultsArray.compactMap { SearchResult(from: $0) }
+        self.summary = dict["summary"] as? String
+        
+        print("✅ SmartSearchResults: Successfully parsed \(self.results.count) search results")
+        
+        if self.results.isEmpty && !resultsArray.isEmpty {
+            print("⚠️ SmartSearchResults: Results array was not empty but all items failed to parse")
+            print("Sample result: \(resultsArray.first ?? [:])")
+        }
     }
 }
 
