@@ -14,6 +14,14 @@ struct MessageAIApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .onAppear {
+                    #if DEBUG
+                    // Run diagnostics after a short delay to ensure UI is loaded
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        DiagnosticHelper.runDiagnostics()
+                    }
+                    #endif
+                }
         }
         .modelContainer(for: [User.self, Conversation.self, Message.self])
     }

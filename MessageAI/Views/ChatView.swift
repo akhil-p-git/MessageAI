@@ -195,6 +195,20 @@ struct ChatView: View {
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 await markMessagesAsRead()
             }
+            
+            #if DEBUG
+            // Quick Firebase connectivity test
+            Task {
+                let db = Firestore.firestore()
+                do {
+                    try await db.collection("_test").document("test").setData(["test": true, "timestamp": Date()])
+                    print("✅ FIREBASE WRITE: SUCCESS - Firebase connection is working!")
+                } catch {
+                    print("❌ FIREBASE WRITE FAILED: \(error.localizedDescription)")
+                    print("❌ Full error: \(error)")
+                }
+            }
+            #endif
         }
         .onDisappear {
             if let currentUser = authViewModel.currentUser {
@@ -437,6 +451,7 @@ struct ChatView: View {
         TypingIndicatorService.shared.setTyping(
             conversationID: conversation.id,
             userID: currentUser.id,
+            userName: currentUser.displayName,
             isTyping: isTyping
         )
     }
@@ -653,9 +668,15 @@ struct ChatView: View {
                 if networkMonitor.isConnected {
                     let db = Firestore.firestore()
                     
+                    print("\n📤 Uploading message to Firebase...")
+                    print("   Message ID: \(message.id)")
+                    print("   Content: \(content)")
+                    print("   Conversation ID: \(conversation.id)")
+                    
                     var messageData = message.toDictionary()
                     messageData["timestamp"] = Timestamp(date: message.timestamp)
                     messageData["status"] = "sent"
+                    messageData["senderName"] = currentUser.displayName
                     
                     try await db.collection("conversations")
                         .document(conversation.id)
@@ -663,8 +684,14 @@ struct ChatView: View {
                         .document(message.id)
                         .setData(messageData)
                     
+                    print("   ✅ Message document created")
+                    
                     // Get all participants except the sender
                     let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+                    
+                    print("   📝 Updating conversation metadata...")
+                    print("      Participants: \(conversation.participantIDs)")
+                    print("      Other participants (unreadBy): \(otherParticipants)")
                     
                     try await db.collection("conversations")
                         .document(conversation.id)
@@ -675,9 +702,21 @@ struct ChatView: View {
                             "lastMessageID": message.id,
                             "unreadBy": otherParticipants
                         ])
+                    
+                    print("   ✅ Conversation metadata updated successfully!")
+                    print("      lastMessage: \(content)")
+                    print("      lastSenderID: \(currentUser.id)")
+                    print("      unreadBy: \(otherParticipants)\n")
+                } else {
+                    print("   ⚠️ Offline - message queued for sync\n")
                 }
             } catch {
-                print("❌ Error queueing message: \(error)")
+                print("❌ Error sending message: \(error.localizedDescription)")
+                if let nsError = error as NSError? {
+                    print("   Error domain: \(nsError.domain)")
+                    print("   Error code: \(nsError.code)")
+                    print("   Error info: \(nsError.userInfo)")
+                }
             }
         }
     }
@@ -713,14 +752,22 @@ struct ChatView: View {
             messageData["status"] = "sent"
             messageData["type"] = "image"
             
+            print("\n📤 Uploading image message to Firebase...")
+            print("   Message ID: \(message.id)")
+            print("   Caption: \(imageCaption.isEmpty ? "📷 Photo" : imageCaption)")
+            
             try await db.collection("conversations")
                 .document(conversation.id)
                 .collection("messages")
                 .document(message.id)
                 .setData(messageData)
             
+            print("   ✅ Image message document created")
+            
             // Get all participants except the sender
             let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+            
+            print("   📝 Updating conversation metadata for image...")
             
             try await db.collection("conversations")
                 .document(conversation.id)
@@ -731,6 +778,8 @@ struct ChatView: View {
                     "lastMessageID": message.id,
                     "unreadBy": otherParticipants
                 ])
+            
+            print("   ✅ Conversation metadata updated for image!\n")
             
             await MainActor.run {
                 selectedImage = nil
@@ -775,14 +824,21 @@ struct ChatView: View {
             messageData["status"] = "sent"
             messageData["type"] = "voice"
             
+            print("\n📤 Uploading voice message to Firebase...")
+            print("   Message ID: \(message.id)")
+            
             try await db.collection("conversations")
                 .document(conversation.id)
                 .collection("messages")
                 .document(message.id)
                 .setData(messageData)
             
+            print("   ✅ Voice message document created")
+            
             // Get all participants except the sender
             let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
+            
+            print("   📝 Updating conversation metadata for voice...")
             
             try await db.collection("conversations")
                 .document(conversation.id)
@@ -794,7 +850,8 @@ struct ChatView: View {
                     "unreadBy": otherParticipants
                 ])
             
-            print("✅ Voice message sent")
+            print("   ✅ Conversation metadata updated for voice!")
+            print("✅ Voice message sent\n")
         } catch {
             print("❌ Error sending voice message: \(error)")
         }

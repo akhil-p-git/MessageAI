@@ -73,32 +73,78 @@ struct ConversationListView: View {
     }
     
     private func startListening() {
-        guard let currentUser = authViewModel.currentUser else { return }
+        guard let currentUser = authViewModel.currentUser else {
+            print("⚠️ ConversationListView: No current user")
+            return
+        }
         
         let db = Firestore.firestore()
+        
+        print("\n👂 ConversationListView: Starting listener for user \(currentUser.id.prefix(8))...")
         
         listener = db.collection("conversations")
             .whereField("participantIDs", arrayContains: currentUser.id)
             .order(by: "lastMessageTime", descending: true)
             .addSnapshotListener { snapshot, error in
-                guard let documents = snapshot?.documents else {
-                    print("Error fetching conversations: \(error?.localizedDescription ?? "Unknown")")
+                if let error = error {
+                    print("❌ ConversationListView: Listener error: \(error.localizedDescription)")
                     return
+                }
+                
+                guard let snapshot = snapshot else {
+                    print("⚠️ ConversationListView: No snapshot")
+                    return
+                }
+                
+                print("\n📊 ConversationListView: Received snapshot update")
+                print("   Documents: \(snapshot.documents.count)")
+                print("   Document changes: \(snapshot.documentChanges.count)")
+                
+                // Log changes
+                for change in snapshot.documentChanges {
+                    let data = change.document.data()
+                    let lastMsg = data["lastMessage"] as? String ?? "none"
+                    let lastSender = data["lastSenderID"] as? String ?? "none"
+                    
+                    switch change.type {
+                    case .added:
+                        print("   ➕ Added: \(change.document.documentID.prefix(8))... - \(lastMsg)")
+                    case .modified:
+                        print("   🔄 Modified: \(change.document.documentID.prefix(8))... - \(lastMsg)")
+                        print("      Sender: \(lastSender.prefix(8))...")
+                    case .removed:
+                        print("   ➖ Removed: \(change.document.documentID.prefix(8))...")
+                    }
                 }
                 
                 var newConversations: [Conversation] = []
                 
-                for document in documents {
+                for document in snapshot.documents {
                     var data = document.data()
                     
+                    // Convert Firestore Timestamp to Date
                     if let timestamp = data["lastMessageTime"] as? Timestamp {
                         data["lastMessageTime"] = timestamp.dateValue()
                     }
                     
                     if let conversation = Conversation.fromDictionary(data) {
                         newConversations.append(conversation)
+                        
+                        // Debug first conversation
+                        if newConversations.count == 1 {
+                            print("\n   📋 First conversation details:")
+                            print("      ID: \(conversation.id.prefix(8))...")
+                            print("      Last message: \(conversation.lastMessage ?? "none")")
+                            print("      Last sender: \(conversation.lastSenderID?.prefix(8) ?? "none")...")
+                            print("      Unread by: \(conversation.unreadBy.count) users")
+                            print("      Timestamp: \(conversation.lastMessageTime ?? Date())")
+                        }
+                    } else {
+                        print("   ⚠️ Failed to parse conversation: \(document.documentID)")
                     }
                 }
+                
+                print("   ✅ Parsed \(newConversations.count) conversations\n")
                 
                 self.conversations = newConversations
                 
