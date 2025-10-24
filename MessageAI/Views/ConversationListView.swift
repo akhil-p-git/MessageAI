@@ -7,7 +7,9 @@ struct ConversationListView: View {
     @State private var showNewChat = false
     @State private var showNewGroup = false
     @State private var listener: ListenerRegistration?
+    @State private var messageListener: ListenerRegistration?
     @State private var userCache: [String: User] = [:]
+    @State private var lastNotifiedMessageIDs: [String: String] = [:]  // conversationID -> lastMessageID
     
     var body: some View {
         NavigationStack {
@@ -65,9 +67,11 @@ struct ConversationListView: View {
             }
             .onAppear {
                 startListening()
+                startListeningForNewMessages()
             }
             .onDisappear {
                 listener?.remove()
+                messageListener?.remove()
             }
         }
     }
@@ -171,6 +175,72 @@ struct ConversationListView: View {
     
     private func deleteConversation(at offsets: IndexSet) {
         // TODO: Implement conversation deletion
+    }
+    
+    private func startListeningForNewMessages() {
+        guard let currentUser = authViewModel.currentUser else {
+            print("⚠️ ConversationListView: No current user for message listener")
+            return
+        }
+        
+        let db = Firestore.firestore()
+        
+        print("\n👂 ConversationListView: Starting global message listener...")
+        
+        // Listen to changes in conversations to detect new messages
+        // This is simpler and doesn't require collectionGroup permissions
+        messageListener = db.collection("conversations")
+            .whereField("participantIDs", arrayContains: currentUser.id)
+            .addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("❌ Message listener error: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let changes = snapshot?.documentChanges else { return }
+                
+                for change in changes {
+                    if change.type == .modified {
+                        let data = change.document.data()
+                        
+                        guard let lastSenderID = data["lastSenderID"] as? String,
+                              let conversationID = data["id"] as? String,
+                              let lastMessage = data["lastMessage"] as? String,
+                              let lastMessageID = data["lastMessageID"] as? String else {
+                            continue
+                        }
+                        
+                        // Check if this is actually a NEW message (not just typing indicator update)
+                        let previousMessageID = self.lastNotifiedMessageIDs[conversationID]
+                        
+                        // Only show notification if:
+                        // 1. Message ID is different (new message, not typing update)
+                        // 2. Message is from someone else
+                        // 3. Not in that specific chat (handled by NotificationManager)
+                        if lastMessageID != previousMessageID && lastSenderID != currentUser.id {
+                            // Update tracked message ID
+                            self.lastNotifiedMessageIDs[conversationID] = lastMessageID
+                            
+                            // Get sender name from user cache
+                            let senderName = self.userCache[lastSenderID]?.displayName ?? "Someone"
+                            
+                            print("🔔 New message detected (ID: \(lastMessageID.prefix(8))...): '\(lastMessage)' from \(senderName)")
+                            
+                            NotificationManager.shared.showNotification(
+                                title: senderName,
+                                body: lastMessage,
+                                conversationID: conversationID,
+                                senderID: lastSenderID,
+                                currentUserID: currentUser.id
+                            )
+                        } else if lastMessageID == previousMessageID {
+                            print("🔕 Skipping notification - same message ID (likely typing indicator update)")
+                        }
+                    }
+                }
+            }
+        
+        print("✅ Global message listener active\n")
     }
 }
 

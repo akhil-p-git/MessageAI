@@ -806,24 +806,36 @@ struct ChatView: View {
                     let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
                     
                     print("   📝 Updating conversation metadata...")
+                    print("      Conversation ID: \(conversation.id)")
                     print("      Participants: \(conversation.participantIDs)")
                     print("      Other participants (unreadBy): \(otherParticipants)")
                     
                     // Use setData with merge to create document if it doesn't exist
-                    try await db.collection("conversations")
-                        .document(conversation.id)
-                        .setData([
-                            "lastMessage": content,
-                            "lastMessageTime": Timestamp(date: Date()),
-                            "lastSenderID": currentUser.id,
-                            "lastMessageID": message.id,
-                            "unreadBy": otherParticipants
-                        ], merge: true)
-                    
-                    print("   ✅ Conversation metadata updated successfully!")
-                    print("      lastMessage: \(content)")
-                    print("      lastSenderID: \(currentUser.id)")
-                    print("      unreadBy: \(otherParticipants)\n")
+                    do {
+                        try await db.collection("conversations")
+                            .document(conversation.id)
+                            .setData([
+                                "lastMessage": content,
+                                "lastMessageTime": Timestamp(date: Date()),
+                                "lastSenderID": currentUser.id,
+                                "lastMessageID": message.id,
+                                "unreadBy": otherParticipants
+                            ], merge: true)
+                        
+                        print("   ✅ Conversation metadata updated successfully!")
+                        print("      lastMessage: \(content)")
+                        print("      lastSenderID: \(currentUser.id)")
+                        print("      unreadBy: \(otherParticipants)\n")
+                    } catch {
+                        print("   ❌ CRITICAL ERROR updating conversation metadata!")
+                        print("      Error: \(error.localizedDescription)")
+                        if let nsError = error as NSError? {
+                            print("      Domain: \(nsError.domain)")
+                            print("      Code: \(nsError.code)")
+                            print("      UserInfo: \(nsError.userInfo)")
+                        }
+                        // Don't throw - message was created successfully
+                    }
                 } else {
                     print("   ⚠️ Offline - message queued for sync\n")
                 }
@@ -885,19 +897,26 @@ struct ChatView: View {
             let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
             
             print("   📝 Updating conversation metadata for image...")
+            print("      Conversation ID: \(conversation.id)")
             
             // Use setData with merge to create document if it doesn't exist
-            try await db.collection("conversations")
-                .document(conversation.id)
-                .setData([
-                    "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
-                    "lastMessageTime": Timestamp(date: Date()),
-                    "lastSenderID": currentUser.id,
-                    "lastMessageID": message.id,
-                    "unreadBy": otherParticipants
-                ], merge: true)
-            
-            print("   ✅ Conversation metadata updated for image!\n")
+            do {
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .setData([
+                        "lastMessage": imageCaption.isEmpty ? "📷 Photo" : imageCaption,
+                        "lastMessageTime": Timestamp(date: Date()),
+                        "lastSenderID": currentUser.id,
+                        "lastMessageID": message.id,
+                        "unreadBy": otherParticipants
+                    ], merge: true)
+                
+                print("   ✅ Conversation metadata updated for image!\n")
+            } catch {
+                print("   ❌ CRITICAL ERROR updating conversation for image!")
+                print("      Error: \(error.localizedDescription)")
+                // Don't throw - message was created successfully
+            }
             
             await MainActor.run {
                 selectedImage = nil
@@ -957,20 +976,27 @@ struct ChatView: View {
             let otherParticipants = conversation.participantIDs.filter { $0 != currentUser.id }
             
             print("   📝 Updating conversation metadata for voice...")
+            print("      Conversation ID: \(conversation.id)")
             
             // Use setData with merge to create document if it doesn't exist
-            try await db.collection("conversations")
-                .document(conversation.id)
-                .setData([
-                    "lastMessage": "🎤 Voice message",
-                    "lastMessageTime": Timestamp(date: Date()),
-                    "lastSenderID": currentUser.id,
-                    "lastMessageID": message.id,
-                    "unreadBy": otherParticipants
-                ], merge: true)
-            
-            print("   ✅ Conversation metadata updated for voice!")
-            print("✅ Voice message sent\n")
+            do {
+                try await db.collection("conversations")
+                    .document(conversation.id)
+                    .setData([
+                        "lastMessage": "🎤 Voice message",
+                        "lastMessageTime": Timestamp(date: Date()),
+                        "lastSenderID": currentUser.id,
+                        "lastMessageID": message.id,
+                        "unreadBy": otherParticipants
+                    ], merge: true)
+                
+                print("   ✅ Conversation metadata updated for voice!")
+                print("✅ Voice message sent\n")
+            } catch {
+                print("   ❌ CRITICAL ERROR updating conversation for voice!")
+                print("      Error: \(error.localizedDescription)")
+                // Don't throw - message was created successfully
+            }
         } catch {
             print("❌ Error sending voice message: \(error)")
         }
