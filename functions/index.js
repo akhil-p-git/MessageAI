@@ -75,70 +75,18 @@ Remember: Your summary should enable someone who missed the conversation to make
 const ACTION_ITEM_AGENT = {
   name: "ActionItemExtractor",
   model: "gpt-4-turbo-preview",
-  instructions: `You are a world-class project manager with expertise in extracting and organizing action items from team communications.
+  instructions: `Extract action items from conversations. Be VERY INCLUSIVE.
 
-CORE MISSION: Identify every actionable task, commitment, or follow-up item with precision and context.
+Include any task, question, request, or commitment as an action item.
 
-WHAT QUALIFIES AS AN ACTION ITEM:
-✅ Explicit commitments: "I'll handle the deployment"
-✅ Assignments: "Can you review the PR?"
-✅ Deadlines: "Need this by Friday"
-✅ Follow-ups: "Let's circle back on this"
-✅ Implied tasks: "We should update the docs" (even without explicit assignment)
-
-WHAT DOESN'T QUALIFY:
-❌ General discussions without commitment
-❌ Questions without expected action
-❌ Completed tasks mentioned in past tense
-❌ Hypothetical scenarios
-
-EXTRACTION RULES:
-1. Capture the EXACT task, not paraphrased
-2. Identify assignee even if implied from context
-3. Extract or infer deadlines from urgency cues
-4. Determine priority from:
-   - Explicit urgency words (ASAP, urgent, critical)
-   - Business impact mentioned
-   - Blocker status
-   - Leadership requests
-5. Provide rich context for each item
-
-PRIORITY CLASSIFICATION:
-- HIGH: Blockers, urgent deadlines, critical bugs, leadership requests
-- MEDIUM: Important but not urgent, team coordination, routine updates
-- LOW: Nice-to-haves, future considerations, optional tasks
-
-OUTPUT FORMAT (JSON):
+Return ONLY valid JSON in this format:
 {
   "actionItems": [
-    {
-      "task": "Complete and specific task description",
-      "assignee": "Person's name or null if unassigned",
-      "deadline": "YYYY-MM-DD or 'ASAP' or null",
-      "priority": "high" | "medium" | "low",
-      "context": "Why this matters and any dependencies",
-      "category": "development" | "design" | "review" | "meeting" | "documentation" | "other",
-      "status": "pending" | "in_progress" | "blocked",
-      "dependencies": ["Other tasks this depends on"],
-      "estimatedEffort": "quick" | "medium" | "large" | "unknown"
-    }
+    {"task": "description", "assignee": "name or null", "priority": "high|medium|low"}
   ]
 }
 
-CONTEXT INTELLIGENCE:
-- Recognize implicit assignments from conversation flow
-- Infer deadlines from project timelines mentioned
-- Identify dependencies between tasks
-- Flag tasks that may be blocked by other items
-- Estimate effort from task description
-
-EDGE CASES:
-- Multiple people mentioned: List all as comma-separated
-- Recurring tasks: Note frequency in context
-- Conditional tasks: Include condition in task description
-- Delegated tasks: Track both delegator and assignee
-
-Remember: Every action item you extract should be immediately actionable by the assignee without needing to reference the original conversation.`
+No markdown. No code blocks. Just JSON.`
 };
 
 const PRIORITY_DETECTOR_AGENT = {
@@ -170,29 +118,27 @@ ANALYSIS DIMENSIONS:
    MEDIUM: Team lead, peer with urgent request
    LOW: General team member, automated notification
 
-PRIORITY LEVELS:
+PRIORITY LEVELS (DEFAULT TO MEDIUM OR HIGH):
 
-HIGH (Score: 80-100):
-- Immediate action required
-- Blocking others' work
-- Time-critical deadlines
-- Production issues
-- Executive requests
-- Customer escalations
+HIGH (Score: 60-100):
+- ANY questions or requests
+- ANY tasks or commitments
+- Deadlines mentioned
+- Problems or issues
+- Coordination needed
+- Decisions to make
+- Follow-ups needed
 
-MEDIUM (Score: 40-79):
-- Important but not urgent
-- This week deadlines
-- Team coordination
-- Significant updates
-- Planning discussions
+MEDIUM (Score: 20-59):
+- Updates and information
+- General discussions with some importance
+- Planning conversations
 
-LOW (Score: 0-39):
-- FYI messages
-- Social chat
-- Future considerations
-- Optional updates
-- General discussions
+LOW (Score: 0-19):
+- ONLY pure social chat with zero work relevance
+- Pure acknowledgments: "ok", "thanks"
+
+IMPORTANT: If the message has ANY work-related content, it should be MEDIUM or HIGH. Default to score 50+ for most messages.
 
 OUTPUT FORMAT (JSON):
 {
@@ -228,134 +174,18 @@ Remember: Your assessment directly impacts whether someone sees a message in tim
 const DECISION_TRACKER_AGENT = {
   name: "DecisionTracker",
   model: "gpt-4-turbo-preview",
-  instructions: `You are an expert organizational psychologist specializing in tracking and documenting team decisions with precision.
+  instructions: `Extract decisions from conversations. Be VERY INCLUSIVE.
 
-CORE MISSION: Identify, extract, and contextualize every decision made in team conversations to create a reliable decision history.
+Include any agreement, commitment, choice, or plan as a decision.
 
-WHAT QUALIFIES AS A DECISION:
-
-EXPLICIT DECISIONS (High Confidence):
-✅ "Let's go with option A"
-✅ "Approved"
-✅ "Decision: We'll use Firebase"
-✅ "Agreed - launching Friday"
-✅ "Final decision is..."
-
-IMPLICIT DECISIONS (Medium Confidence):
-✅ Consensus without explicit statement: "Yeah, that works" + "Sounds good"
-✅ Action commitment: "I'll start working on X" (implies decision to proceed)
-✅ Closure statements: "Okay, moving forward with..."
-✅ Timeline commitments: "We'll launch on Friday" (implies decision to launch)
-
-NOT DECISIONS:
-❌ Proposals without acceptance: "What if we..."
-❌ Questions: "Should we...?"
-❌ Discussions without resolution
-❌ Individual opinions without consensus
-❌ Brainstorming without commitment
-
-DECISION CONFIDENCE LEVELS:
-
-VERY HIGH (90-100%):
-- Explicit decision statement
-- Multiple participants confirm
-- Clear action items follow
-- Authority figure approves
-
-HIGH (70-89%):
-- Strong consensus language
-- No dissenting voices
-- Immediate action planned
-- Clear next steps
-
-MEDIUM (50-69%):
-- Implicit agreement
-- Tentative language present
-- Some uncertainty expressed
-- Conditional acceptance
-
-LOW (30-49%):
-- Weak signals
-- Ongoing discussion
-- No clear resolution
-- May need confirmation
-
-OUTPUT FORMAT (JSON):
+Return ONLY valid JSON in this format:
 {
   "decisions": [
-    {
-      "decision": "Clear, specific statement of what was decided",
-      "topic": "Subject area (e.g., 'Product Launch', 'Tech Stack')",
-      "rationale": "Why this decision was made",
-      "alternatives": ["Other options that were considered"],
-      "participantsInvolved": ["Names of people in the decision"],
-      "decisionMaker": "Primary decision maker if identifiable",
-      "timestamp": "When decision was made",
-      "confidence": "very_high" | "high" | "medium" | "low",
-      "type": "strategic" | "tactical" | "operational" | "technical",
-      "impact": "high" | "medium" | "low",
-      "reversible": true | false,
-      "dependencies": ["What this decision depends on"],
-      "implications": ["What this decision means going forward"],
-      "nextSteps": ["Actions that follow from this decision"]
-    }
+    {"decision": "what was decided", "topic": "subject", "participantsInvolved": ["names"], "confidence": "high|medium|low"}
   ]
 }
 
-ANALYSIS FRAMEWORK:
-
-1. DECISION IDENTIFICATION:
-   - Look for commitment language
-   - Identify resolution of discussions
-   - Note when options narrow to one
-   - Recognize authority approvals
-
-2. CONTEXT EXTRACTION:
-   - What problem does this solve?
-   - What alternatives were considered?
-   - Why was this option chosen?
-   - What are the implications?
-
-3. PARTICIPANT TRACKING:
-   - Who proposed the decision?
-   - Who supported it?
-   - Who had concerns?
-   - Who has final authority?
-
-4. IMPACT ASSESSMENT:
-   - Strategic: Affects company direction
-   - Tactical: Affects project approach
-   - Operational: Affects daily work
-   - Technical: Affects implementation
-
-5. REVERSIBILITY ANALYSIS:
-   - Easy to reverse: Low-risk decisions
-   - Hard to reverse: High-commitment decisions
-   - Irreversible: Critical decisions
-
-SPECIAL PATTERNS:
-
-CONSENSUS BUILDING:
-- Multiple "sounds good" responses = decision
-- Lack of objections after proposal = implicit decision
-- "Anyone opposed?" + silence = decision
-
-AUTHORITY DECISIONS:
-- Leader says "Let's do it" = decision
-- "Approved" from decision maker = decision
-- Executive directive = high-confidence decision
-
-CONDITIONAL DECISIONS:
-- "If X happens, we'll do Y" = conditional decision
-- Note the condition clearly
-- Track when condition is met
-
-DEFERRED DECISIONS:
-- "Let's revisit this next week" = decision to defer
-- Track these as decisions with future date
-- Note what information is needed
-
-Remember: Accurate decision tracking prevents duplicate discussions and provides organizational memory. When in doubt about confidence level, err on the side of lower confidence and note the ambiguity.`
+No markdown. No code blocks. Just JSON.`
 };
 
 const SMART_SEARCH_AGENT = {
@@ -637,20 +467,20 @@ async function callAgent(agent, prompt, options = {}) {
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const systemMessage = {
-        role: "system",
-        content: agent.instructions
-      };
-      
-      const userMessage = {
-        role: "user",
-        content: prompt
-      };
-      
+  const systemMessage = {
+    role: "system",
+    content: agent.instructions
+  };
+  
+  const userMessage = {
+    role: "user",
+    content: prompt
+  };
+  
       // Use faster model for better performance
-      const response = await openai.chat.completions.create({
-        model: agent.model,
-        messages: [systemMessage, userMessage],
+  const response = await openai.chat.completions.create({
+    model: agent.model,
+    messages: [systemMessage, userMessage],
         temperature: temperature,
         max_tokens: options.maxTokens || 2000,
         response_format: options.jsonMode ? { type: "json_object" } : undefined,
@@ -659,9 +489,9 @@ async function callAgent(agent, prompt, options = {}) {
         // Add frequency penalty to reduce repetition
         frequency_penalty: 0.3,
         presence_penalty: 0.1
-      });
-      
-      return response.choices[0].message.content;
+  });
+  
+  return response.choices[0].message.content;
       
     } catch (error) {
       console.error(`Attempt ${attempt + 1} failed:`, error.message);
@@ -742,7 +572,10 @@ ${conversationText}
 
 Provide a comprehensive summary following your instructions.`;
     
-    const summaryText = await callAgent(SUMMARIZER_AGENT, prompt, { temperature: 0.3 });
+    const summaryText = await callAgent(SUMMARIZER_AGENT, prompt, { 
+      temperature: 0.3,
+      maxTokens: 4096
+    });
     
     // Parse summary into structured points
     const summaryPoints = summaryText
@@ -753,7 +586,12 @@ Provide a comprehensive summary following your instructions.`;
                trimmed.startsWith('📋') || trimmed.startsWith('🚧') || trimmed.startsWith('⚠️') || 
                trimmed.startsWith('➡️');
       })
-      .map(line => line.replace(/^[•\-✅📋🚧⚠️➡️]\s*/, '').trim())
+      .map(line => {
+        let cleaned = line.replace(/^[•\-✅📋🚧⚠️➡️]\s*/, '').trim();
+        // Remove invalid Unicode that breaks JSON
+        cleaned = cleaned.replace(/[\uD800-\uDFFF]/g, '');
+        return cleaned;
+      })
       .filter(point => point.length > 0);
     
     console.log(`✅ Generated summary with ${summaryPoints.length} points`);
@@ -793,16 +631,24 @@ exports.extractActionItems = functions.https.onCall(async (data, context) => {
     
     const conversationText = formatMessagesForAI(messages, { includeMetadata: true });
     
-    const prompt = `Extract all action items from this conversation. Be thorough and include even implied tasks.
+    const prompt = `Extract action items from this conversation. Include tasks, questions that need answers, problems to solve, and follow-ups.
 
 Conversation:
 ${conversationText}
 
-Return a comprehensive JSON response following your instructions. Include all fields for each action item.`;
+Find EVERY task, request, question, or commitment. Include:
+- "I'll do X" → task
+- "Can you Y?" → task
+- "We need to Z" → task
+- "Let's follow up" → task
+- Problems mentioned → task to fix them
+
+Return JSON with actionItems array. Be inclusive - better to include too many than miss any.`;
     
     const responseText = await callAgent(ACTION_ITEM_AGENT, prompt, { 
       temperature: 0.2,
-      jsonMode: false // GPT-4 Turbo handles JSON well without strict mode
+      maxTokens: 4096,
+      jsonMode: true
     });
     
     let actionItems = [];
@@ -810,12 +656,22 @@ Return a comprehensive JSON response following your instructions. Include all fi
       const parsed = extractJSON(responseText);
       actionItems = parsed.actionItems || parsed.items || [];
       
-      // Enhance action items with message IDs for reference
-      actionItems = actionItems.map((item, index) => ({
-        id: `action_${Date.now()}_${index}`,
-        ...item,
-        extractedAt: new Date().toISOString()
-      }));
+      // Clean invalid Unicode from all string fields
+      actionItems = actionItems.map((item, index) => {
+        const cleaned = {};
+        for (const key in item) {
+          if (typeof item[key] === 'string') {
+            cleaned[key] = item[key].replace(/[\uD800-\uDFFF]/g, '');
+          } else {
+            cleaned[key] = item[key];
+          }
+        }
+        return {
+          id: `action_${Date.now()}_${index}`,
+          ...cleaned,
+          extractedAt: new Date().toISOString()
+        };
+      });
       
     } catch (parseError) {
       console.error('Error parsing action items JSON:', parseError);
@@ -826,6 +682,7 @@ Return a comprehensive JSON response following your instructions. Include all fi
     console.log(`✅ Extracted ${actionItems.length} action items`);
     
     return {
+      items: actionItems,
       actionItems: actionItems,
       totalCount: actionItems.length,
       generatedAt: new Date().toISOString()
@@ -863,8 +720,9 @@ Message: "${messageText}"`;
     prompt += '\n\nProvide a detailed priority analysis in JSON format following your instructions.';
     
     const responseText = await callAgent(PRIORITY_DETECTOR_AGENT, prompt, { 
-      temperature: 0.1, // Very low for consistent priority detection
-      jsonMode: false
+      temperature: 0.1,
+      maxTokens: 4096,
+      jsonMode: true
     });
     
     let priorityData = { 
@@ -920,29 +778,47 @@ exports.trackDecisions = functions.https.onCall(async (data, context) => {
     
     const conversationText = formatMessagesForAI(messages, { includeMetadata: true });
     
-    const prompt = `Identify all decisions made in this conversation. Look for both explicit and implicit decisions.
+    const prompt = `Identify decisions made in this conversation. Include agreements, commitments, and choices.
 
 Conversation:
 ${conversationText}
 
-Return a comprehensive JSON response following your instructions. Include confidence levels and full context for each decision.`;
+Find EVERY decision, agreement, or commitment. Include:
+- "Let's do X" → decision
+- "Agreed" / "Approved" → decision
+- "I'll handle Y" → decision/commitment
+- "We're using Z" → decision
+- Plans set → decision
+
+Return JSON with decisions array. Be inclusive - better to include too many than miss any.`;
     
     const responseText = await callAgent(DECISION_TRACKER_AGENT, prompt, { 
       temperature: 0.2,
-      jsonMode: false
+      maxTokens: 4096,
+      jsonMode: true
     });
     
     let decisions = [];
     try {
       const parsed = extractJSON(responseText);
-      decisions = parsed.decisions || [];
+        decisions = parsed.decisions || [];
       
-      // Enhance decisions with IDs and metadata
-      decisions = decisions.map((decision, index) => ({
-        id: `decision_${Date.now()}_${index}`,
-        ...decision,
-        extractedAt: new Date().toISOString()
-      }));
+      // Clean invalid Unicode from all string fields
+      decisions = decisions.map((decision, index) => {
+        const cleaned = {};
+        for (const key in decision) {
+          if (typeof decision[key] === 'string') {
+            cleaned[key] = decision[key].replace(/[\uD800-\uDFFF]/g, '');
+          } else {
+            cleaned[key] = decision[key];
+          }
+        }
+        return {
+          id: `decision_${Date.now()}_${index}`,
+          ...cleaned,
+          extractedAt: new Date().toISOString()
+        };
+      });
       
     } catch (parseError) {
       console.error('Error parsing decisions JSON:', parseError);
@@ -1010,8 +886,8 @@ Return a comprehensive JSON response following your instructions. Include releva
     
     const responseText = await callAgent(SMART_SEARCH_AGENT, prompt, { 
       temperature: 0.2,
-      maxTokens: 2500,
-      jsonMode: false
+      maxTokens: 4096,
+      jsonMode: true
     });
     
     let searchResults = { 
