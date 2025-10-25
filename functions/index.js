@@ -537,7 +537,7 @@ Remember: Your goal is to save users time by finding exactly what they need, eve
 async function getConversationMessages(conversationId, limit, options = {}) {
   let query = admin.firestore()
     .collection('conversations')
-    .document(conversationId)
+    .doc(conversationId)
     .collection('messages')
     .orderBy('timestamp', 'desc');
   
@@ -756,25 +756,10 @@ Provide a comprehensive summary following your instructions.`;
       .map(line => line.replace(/^[•\-✅📋🚧⚠️➡️]\s*/, '').trim())
       .filter(point => point.length > 0);
     
-    // Store in Firestore for history
-    await admin.firestore()
-      .collection('conversations')
-      .doc(conversationId)
-      .collection('aiInsights')
-      .add({
-        type: 'summary',
-        content: summaryPoints,
-        rawSummary: summaryText,
-        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        messageCount: messages.length,
-        model: SUMMARIZER_AGENT.model
-      });
-    
     console.log(`✅ Generated summary with ${summaryPoints.length} points`);
     
     return {
       summary: summaryPoints,
-      rawSummary: summaryText,
       messageCount: messages.length,
       generatedAt: new Date().toISOString()
     };
@@ -836,21 +821,6 @@ Return a comprehensive JSON response following your instructions. Include all fi
       console.error('Error parsing action items JSON:', parseError);
       console.log('Raw response:', responseText);
       actionItems = [];
-    }
-    
-    // Store in Firestore
-    if (actionItems.length > 0) {
-      await admin.firestore()
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('aiInsights')
-        .add({
-          type: 'actionItems',
-          content: actionItems,
-          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          messageCount: messages.length,
-          model: ACTION_ITEM_AGENT.model
-        });
     }
     
     console.log(`✅ Extracted ${actionItems.length} action items`);
@@ -977,21 +947,6 @@ Return a comprehensive JSON response following your instructions. Include confid
     } catch (parseError) {
       console.error('Error parsing decisions JSON:', parseError);
       console.log('Raw response:', responseText);
-    }
-    
-    // Store in Firestore
-    if (decisions.length > 0) {
-      await admin.firestore()
-        .collection('conversations')
-        .doc(conversationId)
-        .collection('aiInsights')
-        .add({
-          type: 'decisions',
-          content: decisions,
-          generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          messageCount: messages.length,
-          model: DECISION_TRACKER_AGENT.model
-        });
     }
     
     console.log(`✅ Tracked ${decisions.length} decisions`);

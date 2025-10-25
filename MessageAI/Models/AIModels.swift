@@ -163,19 +163,26 @@ struct ConversationSummary: Codable {
     
     init?(from dict: [String: Any]) {
         guard let points = dict["summary"] as? [String] else {
+            print("❌ ConversationSummary: Missing 'summary' array")
+            print("Available keys: \(dict.keys.joined(separator: ", "))")
             return nil
         }
         
         self.points = points
         self.messageCount = dict["messageCount"] as? Int ?? 0
         
-        // Parse timestamp
-        if let timestampStr = dict["timestamp"] as? String {
+        // Parse timestamp (function returns "generatedAt" as ISO string)
+        if let timestampStr = dict["generatedAt"] as? String {
+            let formatter = ISO8601DateFormatter()
+            self.timestamp = formatter.date(from: timestampStr) ?? Date()
+        } else if let timestampStr = dict["timestamp"] as? String {
             let formatter = ISO8601DateFormatter()
             self.timestamp = formatter.date(from: timestampStr) ?? Date()
         } else {
             self.timestamp = Date()
         }
+        
+        print("✅ ConversationSummary parsed: \(points.count) points")
     }
 }
 
