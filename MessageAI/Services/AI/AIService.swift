@@ -236,9 +236,18 @@ class AIService {
                 self.log("Response data: \(data)", type: .info)
             }
             
-            guard let data = result.data as? [String: Any],
-                  let summary = ConversationSummary(from: data) else {
+            guard let data = result.data as? [String: Any] else {
+                self.log("Response is not a dictionary", type: .error)
+                self.log("Response type: \(type(of: result.data))", type: .error)
+                if let dataString = result.data as? String {
+                    self.log("Response string: \(dataString.prefix(200))", type: .error)
+                }
+                throw AIServiceError.parsingError
+            }
+            
+            guard let summary = ConversationSummary(from: data) else {
                 self.log("Failed to parse summary from response", type: .error)
+                self.log("Available keys: \(data.keys.joined(separator: ", "))", type: .error)
                 throw AIServiceError.parsingError
             }
             

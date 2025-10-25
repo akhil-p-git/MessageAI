@@ -5,6 +5,7 @@
 
 import Foundation
 import SwiftData
+import FirebaseFirestore
 
 @Model
 class User: Identifiable, Codable {
@@ -31,13 +32,13 @@ class User: Identifiable, Codable {
     }
     
     // Computed property to determine if user is actually online
-    // Based on last heartbeat being within 30 seconds
+    // Based on last heartbeat being within 20 seconds (heartbeat updates every 15s)
     var isActuallyOnline: Bool {
         guard showOnlineStatus, isOnline, let heartbeat = lastHeartbeat else {
             return false
         }
         let timeSinceHeartbeat = Date().timeIntervalSince(heartbeat)
-        return timeSinceHeartbeat < 30 // Consider online if heartbeat within 30 seconds
+        return timeSinceHeartbeat < 20 // Consider online if heartbeat within 20 seconds
     }
     
     func toDictionary() -> [String: Any] {
@@ -74,8 +75,22 @@ class User: Identifiable, Codable {
         
         let profilePictureURL = data["profilePictureURL"] as? String
         let isOnline = data["isOnline"] as? Bool ?? false
-        let lastSeen = data["lastSeen"] as? Date
-        let lastHeartbeat = data["lastHeartbeat"] as? Date
+        
+        // Convert Firestore Timestamps to Date
+        var lastSeen: Date?
+        if let timestamp = data["lastSeen"] as? Timestamp {
+            lastSeen = timestamp.dateValue()
+        } else if let date = data["lastSeen"] as? Date {
+            lastSeen = date
+        }
+        
+        var lastHeartbeat: Date?
+        if let timestamp = data["lastHeartbeat"] as? Timestamp {
+            lastHeartbeat = timestamp.dateValue()
+        } else if let date = data["lastHeartbeat"] as? Date {
+            lastHeartbeat = date
+        }
+        
         let blockedUsers = data["blockedUsers"] as? [String] ?? []
         let showOnlineStatus = data["showOnlineStatus"] as? Bool ?? true
         

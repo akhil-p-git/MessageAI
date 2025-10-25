@@ -743,16 +743,44 @@ struct ChatView: View {
                 print("📨 ChatView: Received snapshot with \(snapshot.documents.count) messages")
                 print("   Document changes: \(snapshot.documentChanges.count)")
                 
+                let isInitialLoad = self.messages.isEmpty
+                print("   Is initial load: \(isInitialLoad)")
+                
                 // Collect all changes first, then apply them in one batch on MainActor
-                // This prevents crashes from modifying the array while SwiftUI is rendering
                 var messagesToAdd: [Message] = []
                 var messagesToUpdate: [(index: Int, message: Message)] = []
                 var messageIDsToRemove: [String] = []
                 var needsSort = false
                 
-                // Process all changes
-                for change in snapshot.documentChanges {
-                    var data = change.document.data()
+                // On initial load, process ALL documents (not just changes)
+                // This fixes the issue where only recent changes are returned
+                if isInitialLoad {
+                    print("   🔄 Initial load: Processing all \(snapshot.documents.count) documents")
+                    for document in snapshot.documents {
+                        var data = document.data()
+                        
+                        // Convert Firestore Timestamp to Date
+                        if let timestamp = data["timestamp"] as? Timestamp {
+                            data["timestamp"] = timestamp.dateValue()
+                        }
+                        
+                        guard let message = Message.fromDictionary(data) else {
+                            print("   ⚠️ Failed to parse message from document")
+                            print("   Data keys: \(data.keys.joined(separator: ", "))")
+                            print("   Type: \(data["type"] as? String ?? "nil")")
+                            continue
+                        }
+                        
+                        print("   ✅ Parsed message: type=\(message.type.rawValue), content='\(message.content.prefix(30))', mediaURL=\(message.mediaURL != nil ? "YES" : "NO")")
+                        messagesToAdd.append(message)
+                    }
+                    needsSort = true
+                } else {
+                    // For subsequent updates, process only changes
+                    print("   🔄 Update: Processing \(snapshot.documentChanges.count) changes")
+                    for (index, change) in snapshot.documentChanges.enumerated() {
+                        print("   Processing change \(index + 1)/\(snapshot.documentChanges.count): type=\(change.type.rawValue)")
+                        var data = change.document.data()
                     
                     // Convert Firestore Timestamp to Date
                     if let timestamp = data["timestamp"] as? Timestamp {
@@ -761,8 +789,14 @@ struct ChatView: View {
                     
                     guard let updatedMessage = Message.fromDictionary(data) else {
                         print("   ⚠️ Failed to parse message from change")
+                        print("   Data keys: \(data.keys.joined(separator: ", "))")
+                        print("   Type: \(data["type"] as? String ?? "nil")")
+                        print("   Content: \(data["content"] as? String ?? "nil")")
+                        print("   MediaURL: \(data["mediaURL"] as? String ?? "nil")")
                         continue
                     }
+                    
+                    print("   ✅ Parsed message: type=\(updatedMessage.type.rawValue), content='\(updatedMessage.content)', mediaURL=\(updatedMessage.mediaURL != nil ? "YES" : "NO")")
                     
                     switch change.type {
                     case .added:
@@ -809,6 +843,7 @@ struct ChatView: View {
                     case .removed:
                         messageIDsToRemove.append(updatedMessage.id)
                         print("   🗑️ Will remove message: \(updatedMessage.id)")
+                    }
                     }
                 }
                 
