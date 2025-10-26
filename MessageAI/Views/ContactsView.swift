@@ -6,9 +6,11 @@
 //
 
 import SwiftUI
+import SwiftData
 import FirebaseFirestore
 
 struct ContactsView: View {
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var authViewModel: AuthViewModel
     @State private var contacts: [User] = []
     @State private var isLoading = false
