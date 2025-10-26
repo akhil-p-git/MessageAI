@@ -62,8 +62,8 @@ struct ContactsView: View {
             .navigationTitle("Contacts")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if !contacts.isEmpty {
+                if !contacts.isEmpty {
+                    ToolbarItem(placement: .navigationBarLeading) {
                         Button(isEditMode ? "Done" : "Edit") {
                             withAnimation {
                                 isEditMode.toggle()
