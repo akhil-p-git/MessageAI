@@ -335,11 +335,12 @@ struct ConversationRow: View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomTrailing) {
                 if conversation.isGroup {
+                    let groupInitial = conversation.name?.first.map(String.init)?.uppercased() ?? "G"
                     Circle()
                         .fill(Color.blue)
                         .frame(width: 56, height: 56)
                         .overlay(
-                            Text("G")
+                            Text(groupInitial)
                                 .font(.title2)
                                 .foregroundColor(.white)
                         )

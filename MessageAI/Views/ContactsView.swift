@@ -90,6 +90,9 @@ struct ContactsView: View {
             .refreshable {
                 await loadContacts()
             }
+            .navigationDestination(item: $selectedConversation) { conversation in
+                ChatView(conversation: conversation)
+            }
         }
     }
     

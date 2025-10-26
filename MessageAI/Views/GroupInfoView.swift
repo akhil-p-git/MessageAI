@@ -124,16 +124,14 @@ struct GroupInfoView: View {
             }
             .navigationTitle("Group Info")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
                         dismiss()
                     }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text("Back")
-                        }
-                        .foregroundColor(.blue)
+                        Image(systemName: "chevron.left.circle.fill")
+                            .foregroundColor(.secondary)
                     }
                 }
             }
@@ -202,7 +200,10 @@ struct GroupInfoView: View {
             ])
             
             await MainActor.run {
+                // Update local conversation object
+                conversation.groupPictureURL = url
                 isUploadingImage = false
+                selectedImage = nil  // Clear selection after upload
             }
         } catch {
             print("Error uploading group picture: \(error)")
