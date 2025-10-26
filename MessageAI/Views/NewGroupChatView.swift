@@ -9,63 +9,102 @@ struct NewGroupChatView: View {
     
     @State private var groupName = ""
     @State private var selectedUsers: Set<String> = []
-    @State private var availableUsers: [User] = []
+    @State private var recentUsers: [User] = []
     @State private var isLoading = false
     @State private var isCreating = false
     
+    // Placeholder contacts for future functionality
+    private let placeholderContacts = [
+        ("A", "a@example.com"),
+        ("B", "b@example.com"),
+        ("C", "c@example.com"),
+        ("D", "d@example.com")
+    ]
+    
     var body: some View {
         NavigationStack {
-            VStack {
+            VStack(spacing: 0) {
+                // Group Name Input
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("Group Name", text: $groupName)
+                        .padding()
+                        .background(Color(.systemGray6))
+                        .cornerRadius(12)
+                }
+                .padding()
+                
+                // Content
                 if isLoading {
                     ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List {
-                        Section {
-                            TextField("Group Name", text: $groupName)
-                        }
-                        
-                        Section("Add Participants") {
-                            ForEach(availableUsers) { user in
-                                Button(action: {
-                                    toggleUserSelection(user.id)
-                                }) {
-                                    HStack(spacing: 12) {
-                                        ProfileImageView(
-                                            url: user.profilePictureURL,
-                                            size: 44,
-                                            fallbackText: user.displayName
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Recent Chats Section
+                            if !recentUsers.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("Recent Chats")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
+                                        .padding(.horizontal)
+                                    
+                                    VStack(spacing: 0) {
+                                        ForEach(Array(recentUsers.prefix(3).enumerated()), id: \.element.id) { index, user in
+                                            GroupParticipantRow(
+                                                user: user,
+                                                isSelected: selectedUsers.contains(user.id),
+                                                onTap: {
+                                                    toggleUserSelection(user.id)
+                                                }
+                                            )
+                                            
+                                            if index < min(2, recentUsers.count - 1) {
+                                                Divider()
+                                                    .padding(.leading, 84)
+                                            }
+                                        }
+                                    }
+                                    .background(Color(.systemGray6))
+                                    .cornerRadius(12)
+                                    .padding(.horizontal)
+                                }
+                            }
+                            
+                            // Contacts Section
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Contacts")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal)
+                                
+                                VStack(spacing: 0) {
+                                    ForEach(Array(placeholderContacts.enumerated()), id: \.offset) { index, contact in
+                                        PlaceholderContactRow(
+                                            name: contact.0,
+                                            email: contact.1
                                         )
                                         
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(user.displayName)
-                                                .foregroundColor(.primary)
-                                            
-                                            Text(user.email)
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                        
-                                        Spacer()
-                                        
-                                        if selectedUsers.contains(user.id) {
-                                            Image(systemName: "checkmark.circle.fill")
-                                                .foregroundColor(.blue)
+                                        if index < placeholderContacts.count - 1 {
+                                            Divider()
+                                                .padding(.leading, 84)
                                         }
                                     }
                                 }
-                                .buttonStyle(PlainButtonStyle())
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
+                                .padding(.horizontal)
                             }
-                        }
-                        
-                        if !selectedUsers.isEmpty {
-                            Section {
-                                Text("\(selectedUsers.count) participants selected")
-                                    .foregroundColor(.secondary)
+                            
+                            // Selection Count
+                            if !selectedUsers.isEmpty {
+                                Text("\(selectedUsers.count) participant\(selectedUsers.count == 1 ? "" : "s") selected")
                                     .font(.caption)
+                                    .foregroundColor(.secondary)
+                                    .padding()
                             }
                         }
+                        .padding(.vertical)
                     }
-                    .listStyle(.insetGrouped)
                 }
             }
             .navigationTitle("New Group")
@@ -87,7 +126,7 @@ struct NewGroupChatView: View {
                 }
             }
             .task {
-                await loadUsers()
+                await loadRecentUsers()
             }
         }
     }
@@ -100,19 +139,51 @@ struct NewGroupChatView: View {
         }
     }
     
-    private func loadUsers() async {
+    private func loadRecentUsers() async {
         guard let currentUser = authViewModel.currentUser else { return }
         
         isLoading = true
         
         do {
-            let users = try await AuthService.shared.fetchAllUsers()
+            // Get recent conversations for current user
+            let db = Firestore.firestore()
+            let conversationsSnapshot = try await db.collection("conversations")
+                .whereField("participantIDs", arrayContains: currentUser.id)
+                .order(by: "lastMessageTime", descending: true)
+                .limit(to: 10)
+                .getDocuments()
+            
+            var userIDs: [String] = []
+            
+            // Extract other user IDs from 1-on-1 conversations
+            for doc in conversationsSnapshot.documents {
+                let data = doc.data()
+                if let participantIDs = data["participantIDs"] as? [String],
+                   let isGroup = data["isGroup"] as? Bool,
+                   !isGroup {
+                    if let otherUserID = participantIDs.first(where: { $0 != currentUser.id }) {
+                        if !userIDs.contains(otherUserID) {
+                            userIDs.append(otherUserID)
+                        }
+                    }
+                }
+            }
+            
+            // Fetch user details
+            var users: [User] = []
+            for userID in userIDs.prefix(3) { // Limit to 3 recent users
+                if let userData = try? await db.collection("users").document(userID).getDocument().data(),
+                   let user = User.fromDictionary(userData) {
+                    users.append(user)
+                }
+            }
+            
             await MainActor.run {
-                self.availableUsers = users.filter { $0.id != currentUser.id }
+                self.recentUsers = users
                 self.isLoading = false
             }
         } catch {
-            print("❌ Error loading users: \(error)")
+            print("Error loading recent users: \(error)")
             await MainActor.run {
                 self.isLoading = false
             }
@@ -199,7 +270,97 @@ struct NewGroupChatView: View {
     }
 }
 
+// MARK: - Group Participant Row
+
+struct GroupParticipantRow: View {
+    let user: User
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Profile Picture
+                ProfileImageView(
+                    url: user.profilePictureURL,
+                    size: 56,
+                    fallbackText: user.displayName
+                )
+                
+                // User Info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.displayName)
+                        .font(.body)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text(user.email)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                // Checkmark
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                } else {
+                    Image(systemName: "circle")
+                        .font(.title3)
+                        .foregroundColor(.gray)
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Placeholder Contact Row
+
+struct PlaceholderContactRow: View {
+    let name: String
+    let email: String
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Placeholder Profile Picture
+            Circle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: 56, height: 56)
+                .overlay(
+                    Text(name)
+                        .font(.title2)
+                        .foregroundColor(.gray)
+                )
+            
+            // User Info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(name)
+                    .font(.body)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.gray)
+                
+                Text(email)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 12)
+        .opacity(0.6)
+    }
+}
+
 #Preview {
     NewGroupChatView()
         .environmentObject(AuthViewModel())
 }
+
+

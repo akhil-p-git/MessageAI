@@ -12,11 +12,17 @@ struct MainTabView: View {
                 }
                 .tag(0)
             
+            ContactsView()
+                .tabItem {
+                    Label("Contacts", systemImage: "person.2")
+                }
+                .tag(1)
+            
             SettingsView()
                 .tabItem {
                     Label("Settings", systemImage: "gearshape")
                 }
-                .tag(1)
+                .tag(2)
         }
         .onAppear {
             if let currentUser = authViewModel.currentUser {
