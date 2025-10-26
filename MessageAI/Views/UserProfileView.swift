@@ -76,24 +76,13 @@ struct UserProfileView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 16) {
-                        Button(action: {
-                            Task {
-                                await toggleContact()
-                            }
-                        }) {
-                            Image(systemName: isContact ? "person.fill.badge.minus" : "person.fill.badge.plus")
-                                .foregroundColor(.blue)
+                    Button(action: {
+                        Task {
+                            await startChat()
                         }
-                        
-                        Button(action: {
-                            Task {
-                                await startChat()
-                            }
-                        }) {
-                            Image(systemName: "message.fill")
-                                .foregroundColor(.blue)
-                        }
+                    }) {
+                        Image(systemName: "message.fill")
+                            .foregroundColor(.blue)
                     }
                 }
             }
@@ -149,16 +138,19 @@ struct UserProfileView: View {
         guard let currentUser = authViewModel.currentUser else { return }
         
         do {
+            // Find or create conversation
             let conversation = try await ConversationService.shared.findOrCreateConversation(
                 currentUserID: currentUser.id,
                 otherUserID: user.id,
                 modelContext: modelContext
             )
             
+            // Dismiss this view - the conversation will appear in ConversationListView
             await MainActor.run {
-                self.selectedConversation = conversation
                 dismiss()
             }
+            
+            print("✅ Chat created/found: \(conversation.id)")
         } catch {
             print("Error starting chat: \(error)")
         }

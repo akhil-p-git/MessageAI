@@ -160,11 +160,9 @@ struct EditProfileView: View {
                     "profilePictureURL": FieldValue.delete()
                 ])
                 
-                // Update local user
-                var updatedUser = currentUser
-                updatedUser.profilePictureURL = nil
+                // Update local user directly (it's a class)
                 await MainActor.run {
-                    authViewModel.currentUser = updatedUser
+                    currentUser.profilePictureURL = nil
                     showSuccess = true
                     isLoading = false
                 }
@@ -237,14 +235,11 @@ struct EditProfileView: View {
                     print("✅ Firestore updated successfully")
                 }
                 
-                // Update local user model
-                var updatedUser = currentUser
-                updatedUser.displayName = trimmedName
-                updatedUser.profilePictureURL = newProfileURL
-                updatedUser.status = trimmedStatus.isEmpty ? nil : trimmedStatus
-                
+                // Update local user model directly (it's a class)
                 await MainActor.run {
-                    authViewModel.currentUser = updatedUser
+                    currentUser.displayName = trimmedName
+                    currentUser.profilePictureURL = newProfileURL
+                    currentUser.status = trimmedStatus.isEmpty ? nil : trimmedStatus
                     showSuccess = true
                     isLoading = false
                 }
