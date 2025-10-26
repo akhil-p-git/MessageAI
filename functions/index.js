@@ -964,3 +964,68 @@ exports.healthCheck = functions.https.onCall(async (data, context) => {
     };
   }
 });
+
+// Block check trigger - auto-reply when blocked user tries to message
+exports.checkBlockOnMessage = functions.firestore
+  .document('conversations/{conversationId}/messages/{messageId}')
+  .onCreate(async (snap, context) => {
+    const message = snap.data();
+    const senderID = message.senderID;
+    const conversationId = context.params.conversationId;
+    
+    try {
+      // Get conversation to find recipient
+      const conversationDoc = await admin.firestore()
+        .collection('conversations')
+        .doc(conversationId)
+        .get();
+      
+      const conversation = conversationDoc.data();
+      if (!conversation || conversation.isGroup) {
+        return; // Only check for 1-on-1 chats
+      }
+      
+      const participantIDs = conversation.participantIDs || [];
+      const recipientID = participantIDs.find(id => id !== senderID);
+      
+      if (!recipientID) return;
+      
+      // Check if sender is blocked by recipient
+      const recipientDoc = await admin.firestore()
+        .collection('users')
+        .doc(recipientID)
+        .get();
+      
+      const blockedUsers = recipientDoc.data()?.blockedUsers || [];
+      
+      if (blockedUsers.includes(senderID)) {
+        console.log(`🚫 User ${senderID} is blocked by ${recipientID}`);
+        
+        // Delete the message they just sent
+        await snap.ref.delete();
+        
+        // Send auto-reply from system
+        const autoReplyMessage = {
+          id: `blocked_${Date.now()}`,
+          conversationID: conversationId,
+          senderID: 'system',
+          content: 'This user has blocked you',
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          status: 'sent',
+          type: 'text',
+          isSystemMessage: true,
+          readBy: []
+        };
+        
+        await admin.firestore()
+          .collection('conversations')
+          .doc(conversationId)
+          .collection('messages')
+          .add(autoReplyMessage);
+        
+        console.log('✅ Sent block notification to sender');
+      }
+    } catch (error) {
+      console.error('Error in block check:', error);
+    }
+  });

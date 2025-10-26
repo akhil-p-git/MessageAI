@@ -2,6 +2,7 @@ import SwiftUI
 
 struct BlockReportView: View {
     let user: User
+    let conversationID: String
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var authViewModel: AuthViewModel
     
@@ -96,9 +97,10 @@ struct BlockReportView: View {
             } else {
                 try await BlockUserService.shared.blockUser(
                     blockerID: currentUser.id,
-                    blockedID: user.id
+                    blockedID: user.id,
+                    conversationID: conversationID
                 )
-                successMessage = "User blocked successfully"
+                successMessage = "User blocked, removed from contacts, and conversation deleted"
             }
             
             isBlocked.toggle()
@@ -180,7 +182,8 @@ struct ReportUserSheet: View {
             id: "user1",
             email: "test@example.com",
             displayName: "Test User"
-        )
+        ),
+        conversationID: "test-conv"
     )
     .environmentObject(AuthViewModel())
 }

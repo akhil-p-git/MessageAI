@@ -94,6 +94,39 @@ class MediaService {
         
         try await storageRef.delete()
     }
+    
+    func uploadGroupPicture(_ image: UIImage, groupID: String) async throws -> String {
+        print("🔵 Starting group picture upload for group: \(groupID)")
+        
+        // Resize image to max 800x800
+        let resizedImage = image.resized(to: CGSize(width: 800, height: 800))
+        
+        // Compress image
+        guard let imageData = resizedImage.jpegData(compressionQuality: 0.6) else {
+            print("❌ Failed to convert image to JPEG data")
+            throw NSError(domain: "MediaService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to convert image"])
+        }
+        
+        let filename = "group_\(groupID).jpg"
+        let path = "group_pictures/\(filename)"
+        let storageRef = storage.reference().child(path)
+        
+        print("📤 Uploading to: \(path)")
+        
+        // Upload image with metadata
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+        
+        do {
+            let _ = try await storageRef.putDataAsync(imageData, metadata: metadata)
+            let downloadURL = try await storageRef.downloadURL()
+            print("✅ Group picture uploaded: \(downloadURL.absoluteString)")
+            return downloadURL.absoluteString
+        } catch {
+            print("❌ Upload failed: \(error)")
+            throw error
+        }
+    }
 }
 
 // MARK: - UIImage Extension for Resizing

@@ -34,6 +34,7 @@ struct ChatView: View {
     @State private var showReadReceipts = false
     @State private var selectedMessageForReceipts: Message?
     @State private var userDisplayNames: [String: String] = [:] // Cache user display names
+    @State private var isContact = false
     
     // Track optimistic updates with timestamps to prevent listener overwrites
     // Using static to persist across view recreations
@@ -182,7 +183,7 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showBlockReport) {
             if let user = otherUser {
-                BlockReportView(user: user)
+                BlockReportView(user: user, conversationID: conversation.id)
             }
         }
         .sheet(isPresented: $showAIPanel) {
@@ -209,6 +210,7 @@ struct ChatView: View {
             if !conversation.isGroup {
                 Task {
                     await loadOtherUser()
+                    await checkIfContact()
                 }
             }
             
@@ -505,8 +507,22 @@ struct ChatView: View {
     
     private var toolbarMenu: some View {
         Menu {
+            // Add/Remove Contact (only for 1-on-1 chats)
+            if !conversation.isGroup, let otherUser = otherUser {
+                Button(action: {
+                    Task {
+                        await toggleContact()
+                    }
+                }) {
+                    Label(
+                        isContact ? "Remove Contact" : "Add Contact",
+                        systemImage: isContact ? "person.fill.badge.minus" : "person.fill.badge.plus"
+                    )
+                }
+            }
+            
             Button(action: { showSearchMessages = true }) {
-                Label("Search", systemImage: "magnifyingglass")
+                Label("Search Chat", systemImage: "magnifyingglass")
             }
             
             if conversation.isGroup {
@@ -516,6 +532,7 @@ struct ChatView: View {
             } else if otherUser != nil {
                 Button(action: { showBlockReport = true }) {
                     Label("Block/Report", systemImage: "hand.raised")
+                        .foregroundColor(.red)
                 }
             }
         } label: {
@@ -1534,6 +1551,54 @@ struct ChatView: View {
                     print("❌ Error updating status: \(error.localizedDescription)")
                 }
             }
+        }
+    }
+    
+    // MARK: - Contact Management
+    
+    private func checkIfContact() async {
+        guard let currentUser = authViewModel.currentUser,
+              let otherUser = otherUser else { return }
+        
+        do {
+            let db = Firestore.firestore()
+            let userDoc = try await db.collection("users").document(currentUser.id).getDocument()
+            let contacts = userDoc.data()?["contacts"] as? [String] ?? []
+            
+            await MainActor.run {
+                self.isContact = contacts.contains(otherUser.id)
+            }
+        } catch {
+            print("Error checking contact status: \(error)")
+        }
+    }
+    
+    private func toggleContact() async {
+        guard let currentUser = authViewModel.currentUser,
+              let otherUser = otherUser else { return }
+        
+        do {
+            let db = Firestore.firestore()
+            
+            if isContact {
+                // Remove from contacts
+                try await db.collection("users").document(currentUser.id).updateData([
+                    "contacts": FieldValue.arrayRemove([otherUser.id])
+                ])
+                await MainActor.run {
+                    self.isContact = false
+                }
+            } else {
+                // Add to contacts
+                try await db.collection("users").document(currentUser.id).updateData([
+                    "contacts": FieldValue.arrayUnion([otherUser.id])
+                ])
+                await MainActor.run {
+                    self.isContact = true
+                }
+            }
+        } catch {
+            print("Error toggling contact: \(error)")
         }
     }
 }

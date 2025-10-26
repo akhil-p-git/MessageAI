@@ -9,14 +9,29 @@ class BlockUserService {
     
     private init() {}
     
-    func blockUser(blockerID: String, blockedID: String) async throws {
+    func blockUser(blockerID: String, blockedID: String, conversationID: String?) async throws {
+        // 1. Add to blocked users
         try await db.collection("users")
             .document(blockerID)
             .updateData([
                 "blockedUsers": FieldValue.arrayUnion([blockedID])
             ])
         
-        print("✅ Blocked user: \(blockedID)")
+        // 2. Remove from contacts if they're a contact
+        try await db.collection("users")
+            .document(blockerID)
+            .updateData([
+                "contacts": FieldValue.arrayRemove([blockedID])
+            ])
+        
+        // 3. Delete the conversation if provided
+        if let conversationID = conversationID {
+            try await db.collection("conversations")
+                .document(conversationID)
+                .delete()
+        }
+        
+        print("✅ Blocked user: \(blockedID), removed from contacts, deleted conversation")
     }
     
     func unblockUser(blockerID: String, blockedID: String) async throws {

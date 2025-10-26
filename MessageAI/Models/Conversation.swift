@@ -11,6 +11,7 @@ class Conversation: Identifiable {
     @Attribute(.unique) var id: String
     var isGroup: Bool
     var name: String?
+    var groupPictureURL: String?
     var participantIDs: [String]
     var lastMessage: String?
     var lastMessageTime: Date?
@@ -20,11 +21,12 @@ class Conversation: Identifiable {
     var creatorID: String?
     var deletedBy: [String] = []  // Users who have deleted this conversation from their view
     
-    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, lastMessageID: String? = nil, unreadBy: [String] = [], creatorID: String? = nil, deletedBy: [String] = []) {
+    init(id: String, isGroup: Bool, participantIDs: [String], name: String? = nil, groupPictureURL: String? = nil, lastMessage: String? = nil, lastMessageTime: Date? = nil, lastSenderID: String? = nil, lastMessageID: String? = nil, unreadBy: [String] = [], creatorID: String? = nil, deletedBy: [String] = []) {
         self.id = id
         self.isGroup = isGroup
         self.participantIDs = participantIDs
         self.name = name
+        self.groupPictureURL = groupPictureURL
         self.lastMessage = lastMessage
         self.lastMessageTime = lastMessageTime
         self.lastSenderID = lastSenderID
@@ -45,6 +47,10 @@ class Conversation: Identifiable {
         
         if let name = name {
             dict["name"] = name
+        }
+        
+        if let groupPictureURL = groupPictureURL {
+            dict["groupPictureURL"] = groupPictureURL
         }
         
         if let lastMessage = lastMessage {
@@ -78,6 +84,7 @@ class Conversation: Identifiable {
         }
         
         let name = data["name"] as? String
+        let groupPictureURL = data["groupPictureURL"] as? String
         let lastMessage = data["lastMessage"] as? String
         let lastMessageTime = data["lastMessageTime"] as? Date
         let lastSenderID = data["lastSenderID"] as? String
@@ -91,6 +98,7 @@ class Conversation: Identifiable {
             isGroup: isGroup,
             participantIDs: participantIDs,
             name: name,
+            groupPictureURL: groupPictureURL,
             lastMessage: lastMessage,
             lastMessageTime: lastMessageTime,
             lastSenderID: lastSenderID,

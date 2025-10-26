@@ -7,6 +7,7 @@ struct EditProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     
     @State private var displayName: String = ""
+    @State private var status: String = ""
     @State private var selectedImage: UIImage?
     @State private var showImagePicker = false
     @State private var isLoading = false
@@ -15,18 +16,6 @@ struct EditProfileView: View {
     @State private var showSuccess = false
     
     var body: some View {
-        Button("Test AI") {
-            Task {
-                do {
-                    let summary = try await AIService.shared.summarizeThread(
-                        conversationID: "test-id"
-                    )
-                    print("✅ AI Works! Summary: \(summary.points)")
-                } catch {
-                    print("❌ Error: \(error)")
-                }
-            }
-        }
         Form {
             Section("Profile Picture") {
                 VStack(spacing: 16) {
@@ -70,6 +59,14 @@ struct EditProfileView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, 8)
+            }
+            
+            Section("Update Status") {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("What's on your mind?", text: $status)
+                        .textFieldStyle(.roundedBorder)
+                        .textInputAutocapitalization(.sentences)
+                }
             }
             
             Section("Profile Information") {
@@ -137,6 +134,7 @@ struct EditProfileView: View {
         }
         .onAppear {
             displayName = authViewModel.currentUser?.displayName ?? ""
+            status = authViewModel.currentUser?.status ?? ""
         }
     }
     
@@ -222,6 +220,16 @@ struct EditProfileView: View {
                     updateData["displayName"] = trimmedName
                 }
                 
+                // Update status if changed
+                let trimmedStatus = status.trimmingCharacters(in: .whitespaces)
+                if trimmedStatus != (currentUser.status ?? "") {
+                    if trimmedStatus.isEmpty {
+                        updateData["status"] = FieldValue.delete()
+                    } else {
+                        updateData["status"] = trimmedStatus
+                    }
+                }
+                
                 // Update Firestore if there are changes
                 if !updateData.isEmpty {
                     print("💾 Updating Firestore with: \(updateData)")
@@ -233,6 +241,7 @@ struct EditProfileView: View {
                 var updatedUser = currentUser
                 updatedUser.displayName = trimmedName
                 updatedUser.profilePictureURL = newProfileURL
+                updatedUser.status = trimmedStatus.isEmpty ? nil : trimmedStatus
                 
                 await MainActor.run {
                     authViewModel.currentUser = updatedUser

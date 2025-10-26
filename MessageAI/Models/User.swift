@@ -13,17 +13,19 @@ class User: Identifiable, Codable {
     var email: String
     var displayName: String
     var profilePictureURL: String?
+    var status: String?  // User status/bio
     var isOnline: Bool
     var lastSeen: Date?
     var lastHeartbeat: Date?  // Track last heartbeat for accurate online status
     var blockedUsers: [String]
     var showOnlineStatus: Bool
     
-    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, isOnline: Bool = false, lastSeen: Date? = nil, lastHeartbeat: Date? = nil, blockedUsers: [String] = [], showOnlineStatus: Bool = true) {
+    init(id: String, email: String, displayName: String, profilePictureURL: String? = nil, status: String? = nil, isOnline: Bool = false, lastSeen: Date? = nil, lastHeartbeat: Date? = nil, blockedUsers: [String] = [], showOnlineStatus: Bool = true) {
         self.id = id
         self.email = email
         self.displayName = displayName
         self.profilePictureURL = profilePictureURL
+        self.status = status
         self.isOnline = isOnline
         self.lastSeen = lastSeen
         self.lastHeartbeat = lastHeartbeat
@@ -55,6 +57,10 @@ class User: Identifiable, Codable {
             dict["profilePictureURL"] = profilePictureURL
         }
         
+        if let status = status {
+            dict["status"] = status
+        }
+        
         if let lastSeen = lastSeen {
             dict["lastSeen"] = lastSeen
         }
@@ -74,6 +80,7 @@ class User: Identifiable, Codable {
         }
         
         let profilePictureURL = data["profilePictureURL"] as? String
+        let status = data["status"] as? String
         let isOnline = data["isOnline"] as? Bool ?? false
         
         // Convert Firestore Timestamps to Date
@@ -99,6 +106,7 @@ class User: Identifiable, Codable {
             email: email,
             displayName: displayName,
             profilePictureURL: profilePictureURL,
+            status: status,
             isOnline: isOnline,
             lastSeen: lastSeen,
             lastHeartbeat: lastHeartbeat,
@@ -108,7 +116,7 @@ class User: Identifiable, Codable {
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, email, displayName, profilePictureURL, isOnline, lastSeen, lastHeartbeat, blockedUsers, showOnlineStatus
+        case id, email, displayName, profilePictureURL, status, isOnline, lastSeen, lastHeartbeat, blockedUsers, showOnlineStatus
     }
     
     required init(from decoder: Decoder) throws {
@@ -117,6 +125,7 @@ class User: Identifiable, Codable {
         email = try container.decode(String.self, forKey: .email)
         displayName = try container.decode(String.self, forKey: .displayName)
         profilePictureURL = try container.decodeIfPresent(String.self, forKey: .profilePictureURL)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
         isOnline = try container.decodeIfPresent(Bool.self, forKey: .isOnline) ?? false
         lastSeen = try container.decodeIfPresent(Date.self, forKey: .lastSeen)
         lastHeartbeat = try container.decodeIfPresent(Date.self, forKey: .lastHeartbeat)
@@ -130,6 +139,7 @@ class User: Identifiable, Codable {
         try container.encode(email, forKey: .email)
         try container.encode(displayName, forKey: .displayName)
         try container.encodeIfPresent(profilePictureURL, forKey: .profilePictureURL)
+        try container.encodeIfPresent(status, forKey: .status)
         try container.encode(isOnline, forKey: .isOnline)
         try container.encodeIfPresent(lastSeen, forKey: .lastSeen)
         try container.encodeIfPresent(lastHeartbeat, forKey: .lastHeartbeat)
@@ -137,3 +147,4 @@ class User: Identifiable, Codable {
         try container.encode(showOnlineStatus, forKey: .showOnlineStatus)
     }
 }
+
