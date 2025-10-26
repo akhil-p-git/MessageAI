@@ -71,6 +71,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.large)
             .alert("Log Out", isPresented: $showLogoutAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Log Out", role: .destructive) {
