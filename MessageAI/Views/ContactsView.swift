@@ -64,12 +64,8 @@ struct ContactsView: View {
                             ContactRowWithActions(
                                 user: contact,
                                 onMessage: {
-                                    Task {
-                                        await startChat(with: contact)
-                                    }
-                                },
-                                selectedConversation: $selectedConversation,
-                                showChat: $showChat
+                                    startChat(with: contact)
+                                }
                             )
                         }
                         .onDelete(perform: deleteContacts)
@@ -174,20 +170,23 @@ struct ContactsView: View {
         }
     }
     
-    private func startChat(with user: User) async {
+    private func startChat(with user: User) {
         guard let currentUser = authViewModel.currentUser else { return }
         
-        do {
-            let conversation = try await ConversationService.shared.findOrCreateConversation(
-                currentUserID: currentUser.id,
-                otherUserID: user.id,
-                modelContext: modelContext
-            )
-            
-            // Navigation will happen automatically through ConversationListView
-            print("✅ Chat ready: \(conversation.id)")
-        } catch {
-            print("Error starting chat: \(error)")
+        Task {
+            do {
+                let conversation = try await ConversationService.shared.findOrCreateConversation(
+                    currentUserID: currentUser.id,
+                    otherUserID: user.id,
+                    modelContext: modelContext
+                )
+                
+                await MainActor.run {
+                    self.selectedConversation = conversation
+                }
+            } catch {
+                print("Error starting chat: \(error)")
+            }
         }
     }
 }
