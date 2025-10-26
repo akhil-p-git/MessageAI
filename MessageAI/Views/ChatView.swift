@@ -301,9 +301,6 @@ struct ChatView: View {
                     )
                 }
                 // Only show last seen if user allows it
-                if user.showOnlineStatus {
-                LastSeenView(isOnline: user.isActuallyOnline, lastSeen: user.lastSeen)
-                }
             }
             Spacer()
         }

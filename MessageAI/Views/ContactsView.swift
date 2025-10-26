@@ -44,7 +44,10 @@ struct ContactsView: View {
                             Button(action: {
                                 showAddContact = true
                             }) {
-                                Label("Add Contact", systemImage: "plus.circle.fill")
+                                Text("Add Contact")
+                                    .font(.body)
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 12)
                             }
                             .buttonStyle(.borderedProminent)
                             .padding(.top, 8)
