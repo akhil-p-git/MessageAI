@@ -135,34 +135,21 @@ struct UserProfileView: View {
     }
     
     private func startChat() async {
-        print("💬 UserProfileView: Starting chat...")
-        guard let currentUser = authViewModel.currentUser else {
-            print("❌ No current user")
-            return
-        }
-        
-        print("   Current user: \(currentUser.id)")
-        print("   Other user: \(user.id)")
+        guard let currentUser = authViewModel.currentUser else { return }
         
         do {
-            // Find or create conversation
-            print("   Finding/creating conversation...")
-            let conversation = try await ConversationService.shared.findOrCreateConversation(
+            // Find or create conversation - it will appear in Chats tab
+            _ = try await ConversationService.shared.findOrCreateConversation(
                 currentUserID: currentUser.id,
                 otherUserID: user.id,
                 modelContext: modelContext
             )
             
-            print("✅ Chat created/found: \(conversation.id)")
-            
-            // Dismiss this view - the conversation will appear in ConversationListView
             await MainActor.run {
-                print("   Dismissing UserProfileView...")
                 dismiss()
             }
         } catch {
-            print("❌ Error starting chat: \(error)")
-            print("   Error details: \(error.localizedDescription)")
+            print("Error starting chat: \(error)")
         }
     }
 }

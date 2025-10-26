@@ -15,6 +15,7 @@ struct ContactsView: View {
     @State private var contacts: [User] = []
     @State private var isLoading = false
     @State private var showAddContact = false
+    @State private var selectedConversation: Conversation?
     
     var body: some View {
         NavigationStack {
@@ -66,7 +67,9 @@ struct ContactsView: View {
                                     Task {
                                         await startChat(with: contact)
                                     }
-                                }
+                                },
+                                selectedConversation: $selectedConversation,
+                                showChat: $showChat
                             )
                         }
                         .onDelete(perform: deleteContacts)
