@@ -12,74 +12,64 @@ struct ContactsView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @State private var contacts: [User] = []
     @State private var isLoading = false
-    @State private var isEditMode = false
     @State private var showAddContact = false
     
     var body: some View {
         NavigationStack {
-            VStack {
+            List {
                 if isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                    }
                 } else if contacts.isEmpty {
-                    // Empty State
-                    VStack(spacing: 16) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray.opacity(0.5))
-                        
-                        Text("No Contacts Yet")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Text("Add contacts to quickly start conversations")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 40)
-                        
-                        Button(action: {
-                            showAddContact = true
-                        }) {
-                            Label("Add Contact", systemImage: "plus.circle.fill")
+                    Section {
+                        VStack(spacing: 16) {
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray.opacity(0.5))
+                            
+                            Text("No Contacts Yet")
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                            
+                            Text("Add contacts to quickly start conversations")
                                 .font(.body)
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                            
+                            Button(action: {
+                                showAddContact = true
+                            }) {
+                                Label("Add Contact", systemImage: "plus.circle.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.top, 8)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .padding(.top, 8)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // Contacts List
-                    List {
+                    Section {
                         ForEach(contacts) { contact in
-                            ContactRow(user: contact)
+                            NavigationLink(destination: UserProfileView(user: contact)) {
+                                ContactRow(user: contact)
+                            }
                         }
-                        .onDelete(perform: isEditMode ? deleteContacts : nil)
+                        .onDelete(perform: deleteContacts)
                     }
-                    .listStyle(.plain)
                 }
             }
             .navigationTitle("Contacts")
-            .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if !contacts.isEmpty {
-                        Button(isEditMode ? "Done" : "Edit") {
-                            withAnimation {
-                                isEditMode.toggle()
-                            }
-                        }
-                    }
+            .navigationBarItems(
+                leading: contacts.isEmpty ? nil : EditButton(),
+                trailing: Button(action: { showAddContact = true }) {
+                    Image(systemName: "plus")
                 }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        showAddContact = true
-                    }) {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
+            )
             .sheet(isPresented: $showAddContact) {
                 AddContactView { newContact in
                     addContact(newContact)
@@ -111,7 +101,6 @@ struct ContactsView: View {
                 return
             }
             
-            // Fetch contact details
             var loadedContacts: [User] = []
             for contactID in contactIDs {
                 if let userData = try? await db.collection("users").document(contactID).getDocument().data(),
@@ -139,7 +128,6 @@ struct ContactsView: View {
             do {
                 let db = Firestore.firestore()
                 
-                // Add to user's contacts array in Firestore
                 try await db.collection("users").document(currentUser.id).updateData([
                     "contacts": FieldValue.arrayUnion([user.id])
                 ])
@@ -183,7 +171,7 @@ struct ContactRow: View {
         HStack(spacing: 12) {
             ProfileImageView(
                 url: user.profilePictureURL,
-                size: 56,
+                size: 50,
                 fallbackText: user.displayName
             )
             
@@ -196,10 +184,8 @@ struct ContactRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
-            
-            Spacer()
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 }
 
@@ -207,4 +193,3 @@ struct ContactRow: View {
     ContactsView()
         .environmentObject(AuthViewModel())
 }
-

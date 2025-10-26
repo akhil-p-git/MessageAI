@@ -6,10 +6,15 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct UserProfileView: View {
     let user: User
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @State private var isContact = false
+    @State private var selectedConversation: Conversation?
     
     var body: some View {
         NavigationStack {
@@ -58,19 +63,103 @@ struct UserProfileView: View {
             }
             .navigationTitle(user.displayName)
             .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: {
                         dismiss()
                     }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                            Text("Back")
+                        Image(systemName: "chevron.left.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            Task {
+                                await toggleContact()
+                            }
+                        }) {
+                            Image(systemName: isContact ? "person.fill.badge.minus" : "person.fill.badge.plus")
+                                .foregroundColor(.blue)
                         }
-                        .foregroundColor(.blue)
+                        
+                        Button(action: {
+                            Task {
+                                await startChat()
+                            }
+                        }) {
+                            Image(systemName: "message.fill")
+                                .foregroundColor(.blue)
+                        }
                     }
                 }
             }
+            .task {
+                await checkIfContact()
+            }
+        }
+    }
+    
+    private func checkIfContact() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            let db = Firestore.firestore()
+            let userDoc = try await db.collection("users").document(currentUser.id).getDocument()
+            let contacts = userDoc.data()?["contacts"] as? [String] ?? []
+            
+            await MainActor.run {
+                self.isContact = contacts.contains(user.id)
+            }
+        } catch {
+            print("Error checking contact status: \(error)")
+        }
+    }
+    
+    private func toggleContact() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            let db = Firestore.firestore()
+            
+            if isContact {
+                try await db.collection("users").document(currentUser.id).updateData([
+                    "contacts": FieldValue.arrayRemove([user.id])
+                ])
+                await MainActor.run {
+                    self.isContact = false
+                }
+            } else {
+                try await db.collection("users").document(currentUser.id).updateData([
+                    "contacts": FieldValue.arrayUnion([user.id])
+                ])
+                await MainActor.run {
+                    self.isContact = true
+                }
+            }
+        } catch {
+            print("Error toggling contact: \(error)")
+        }
+    }
+    
+    private func startChat() async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            let conversation = try await ConversationService.shared.findOrCreateConversation(
+                currentUserID: currentUser.id,
+                otherUserID: user.id,
+                modelContext: modelContext
+            )
+            
+            await MainActor.run {
+                self.selectedConversation = conversation
+                dismiss()
+            }
+        } catch {
+            print("Error starting chat: \(error)")
         }
     }
 }
