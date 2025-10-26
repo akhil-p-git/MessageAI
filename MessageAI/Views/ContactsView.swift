@@ -58,9 +58,14 @@ struct ContactsView: View {
                 } else {
                     Section {
                         ForEach(contacts) { contact in
-                            NavigationLink(destination: UserProfileView(user: contact)) {
-                                ContactRow(user: contact)
-                            }
+                            ContactRowWithActions(
+                                user: contact,
+                                onMessage: {
+                                    Task {
+                                        await startChat(with: contact)
+                                    }
+                                }
+                            )
                         }
                         .onDelete(perform: deleteContacts)
                     }
@@ -163,32 +168,70 @@ struct ContactsView: View {
             }
         }
     }
-}
-
-// MARK: - Contact Row
-
-struct ContactRow: View {
-    let user: User
     
-    var body: some View {
-        HStack(spacing: 12) {
-            ProfileImageView(
-                url: user.profilePictureURL,
-                size: 50,
-                fallbackText: user.displayName
+    private func startChat(with user: User) async {
+        guard let currentUser = authViewModel.currentUser else { return }
+        
+        do {
+            let conversation = try await ConversationService.shared.findOrCreateConversation(
+                currentUserID: currentUser.id,
+                otherUserID: user.id,
+                modelContext: modelContext
             )
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text(user.displayName)
-                    .font(.body)
-                    .fontWeight(.semibold)
-                
-                Text(user.email)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
+            // Navigation will happen automatically through ConversationListView
+            print("✅ Chat ready: \(conversation.id)")
+        } catch {
+            print("Error starting chat: \(error)")
         }
-        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Contact Row With Actions
+
+struct ContactRowWithActions: View {
+    let user: User
+    let onMessage: () -> Void
+    @State private var showProfile = false
+    
+    var body: some View {
+        Button(action: {
+            showProfile = true
+        }) {
+            HStack(spacing: 12) {
+                ProfileImageView(
+                    url: user.profilePictureURL,
+                    size: 50,
+                    fallbackText: user.displayName
+                )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.displayName)
+                        .font(.body)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    
+                    Text(user.email)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+                
+                Button(action: onMessage) {
+                    Image(systemName: "message.fill")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showProfile) {
+            UserProfileView(user: user)
+        }
     }
 }
 
