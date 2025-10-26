@@ -198,6 +198,8 @@ struct EditProfileView: View {
                 var newProfileURL: String? = currentUser.profilePictureURL
                 if let image = selectedImage {
                     print("📸 Uploading profile picture...")
+                    print("   User ID: \(currentUser.id)")
+                    print("   Image size: \(image.size)")
                     do {
                         let url = try await MediaService.shared.uploadProfilePicture(image, userID: currentUser.id)
                         updateData["profilePictureURL"] = url
@@ -205,6 +207,7 @@ struct EditProfileView: View {
                         print("✅ Profile picture uploaded: \(url)")
                     } catch {
                         print("❌ Failed to upload profile picture: \(error)")
+                        print("   Error details: \(error.localizedDescription)")
                         await MainActor.run {
                             errorMessage = "Failed to upload image: \(error.localizedDescription)"
                             isLoading = false
